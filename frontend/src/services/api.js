@@ -13,7 +13,9 @@ export const api = axios.create({
 
 export function getApiError(error, fallback = 'Request failed') {
   if (!error?.response && (error?.code === 'ERR_NETWORK' || error?.code === 'ECONNABORTED')) {
-    return 'StreamConnect API is offline. Start the backend with: npm --prefix backend run dev';
+    return import.meta.env.DEV
+      ? 'StreamConnect API is offline. Start the backend with: npm --prefix backend run dev'
+      : 'StreamConnect API is unavailable. Configure the Netlify VITE_API_URL variable with your public backend URL.';
   }
   return error?.response?.data?.error || fallback;
 }
