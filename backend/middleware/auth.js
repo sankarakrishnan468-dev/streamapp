@@ -1,0 +1,22 @@
+import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
+import { env } from '../config/env.js';
+
+export async function requireAuth(req, res, next) {
+  try {
+    const token = req.cookies[env.cookieName];
+    if (!token) return res.status(401).json({ error: 'Authentication required' });
+    const payload = jwt.verify(token, env.jwtSecret);
+    const user = await User.findById(payload.sub);
+    if (!user || user.status !== 'active') return res.status(401).json({ error: 'Invalid or inactive session' });
+    req.user = user;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Invalid or expired session' });
+  }
+}
+
+export function requireRole(...roles) {
+  return (req, res, next) => roles.includes(req.user?.role) ? next() : res.status(403).json({ error: 'Insufficient permissions' });
+}
+

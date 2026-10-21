@@ -1,0 +1,20 @@
+import { Router } from 'express';
+import multer from 'multer';
+import { requireAuth } from '../middleware/auth.js';
+import { createComment, deleteVideo, getVideo, listComments, listHistory, listOwnedVideos, listSaved, listVideos, saveHistory, toggleLike, toggleSaved, uploadRecordedVideo } from '../controllers/video.controller.js';
+
+const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 }, fileFilter: (_req, file, callback) => callback(null, file.mimetype.startsWith('video/')) });
+router.get('/', listVideos);
+router.get('/mine', requireAuth, listOwnedVideos);
+router.get('/saved', requireAuth, listSaved);
+router.get('/history', requireAuth, listHistory);
+router.get('/:id/comments', listComments);
+router.get('/:id', getVideo);
+router.post('/', requireAuth, upload.single('video'), uploadRecordedVideo);
+router.delete('/:id', requireAuth, deleteVideo);
+router.post('/:id/like', requireAuth, toggleLike);
+router.post('/:id/comments', requireAuth, createComment);
+router.post('/:id/save', requireAuth, toggleSaved);
+router.post('/:id/history', requireAuth, saveHistory);
+export default router;

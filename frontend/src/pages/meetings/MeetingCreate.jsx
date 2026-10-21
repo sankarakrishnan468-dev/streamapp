@@ -1,0 +1,7 @@
+import { useState } from 'react';
+import { Link as LinkIcon, Plus, Video } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { api, getApiError } from '../../services/api.js';
+
+export default function MeetingCreate() { const navigate = useNavigate(); const [title, setTitle] = useState(''); const [meetingId, setMeetingId] = useState(''); const [error, setError] = useState(''); async function create(e) { e.preventDefault(); try { const { data } = await api.post('/meetings', { title }); navigate(`/meetings/${data.meeting.roomId}`); } catch (err) { setError(getApiError(err, 'Please sign in before creating a meeting')); } } return <div className="meeting-create"><div className="feature-icon"><Video /></div><h1>Private meetings</h1><p>Meet securely with up to five participants.</p><form className="meeting-form" onSubmit={create}><label>Meeting title<input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder="Team sync" /></label>{error && <div className="form-error">{error}</div>}<button className="button primary"><Plus size={17} /> Create meeting</button></form><div className="join-by-id"><h2>Join with meeting ID</h2><form onSubmit={(e) => { e.preventDefault(); navigate(`/meetings/${meetingId.trim()}`); }}><input value={meetingId} onChange={(e) => setMeetingId(e.target.value)} placeholder="Meeting ID" required /><button className="button ghost"><LinkIcon size={16} /> Join</button></form></div></div>; }
+
