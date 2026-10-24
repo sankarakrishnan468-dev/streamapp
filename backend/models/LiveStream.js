@@ -11,7 +11,7 @@ const liveStreamSchema = new mongoose.Schema({
   status: { type: String, enum: ['scheduled', 'live', 'paused', 'ended'], default: 'live', index: true },
   health: { type: String, enum: ['unknown', 'good', 'warning', 'error'], default: 'unknown' },
   provider: { type: String, default: 'external-hls' },
-  viewerLimit: { type: Number, default: 50, immutable: true },
+  viewerLimit: { type: Number, default: 100, min: 1, max: 100 },
   startedAt: { type: Date, default: Date.now },
   endedAt: Date,
 }, { timestamps: true });

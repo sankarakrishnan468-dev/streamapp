@@ -54,6 +54,7 @@ export function createServer() {
   installSocketAuth(io);
   installMeetingSockets(io);
   installStreamSockets(io);
+  app.set('io', io);
   return { app, httpServer, io };
 }
 

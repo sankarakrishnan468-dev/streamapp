@@ -1,24 +1,122 @@
-import { useEffect, useRef, useState } from 'react';
-import { Camera, CameraOff, Copy, Mic, MicOff, MonitorUp, PhoneOff, Send, UserMinus } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Camera, CameraOff, Copy, Mic, MicOff, MonitorUp, PhoneOff, Send, Share2, UserMinus, Users } from 'lucide-react';
+import { Room, RoomEvent, Track } from 'livekit-client';
 import { io } from 'socket.io-client';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, getApiError, socketUrl } from '../../services/api.js';
+import ShareModal from '../../components/ShareModal.jsx';
 
 const EMOJIS = ['👍', '👏', '❤️', '😂', '🎉', '🔥'];
 
-function RemoteTile({ stream, name }) { const ref = useRef(null); useEffect(() => { if (ref.current) ref.current.srcObject = stream; }, [stream]); return <div className="video-tile"><video ref={ref} autoPlay playsInline /><span>{name || 'Participant'}</span></div>; }
-async function getMedia(setError) { if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera and microphone require localhost or HTTPS.'); try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch (error) { if (!['NotFoundError', 'OverconstrainedError'].includes(error.name)) throw error; const tracks = []; try { tracks.push(...(await navigator.mediaDevices.getUserMedia({ video: true, audio: false })).getVideoTracks()); } catch {} try { tracks.push(...(await navigator.mediaDevices.getUserMedia({ video: false, audio: true })).getAudioTracks()); } catch {} setError(tracks.length ? 'Joined with available media. Check the unavailable device permissions.' : 'No camera or microphone is available.'); return new MediaStream(tracks); } }
+function MediaTile({ participant, local = false, refreshKey }) {
+  const videoRef = useRef(null); const audioRef = useRef(null); const [hasVideo, setHasVideo] = useState(false);
+  useEffect(() => {
+    const publications = [...participant.trackPublications.values()];
+    const videoTrack = publications.find((item) => item.source === Track.Source.ScreenShare && item.track)?.track || publications.find((item) => item.source === Track.Source.Camera && item.track)?.track;
+    const audioTrack = publications.find((item) => item.source === Track.Source.Microphone && item.track)?.track;
+    if (videoRef.current && videoTrack) { videoTrack.attach(videoRef.current); videoRef.current.muted = local; videoRef.current.play().catch(() => {}); setHasVideo(true); } else setHasVideo(false);
+    if (audioRef.current && audioTrack && !local) { audioTrack.attach(audioRef.current); audioRef.current.autoplay = true; audioRef.current.play().catch(() => {}); }
+    return () => { videoTrack?.detach(videoRef.current); audioTrack?.detach(audioRef.current); };
+  }, [participant, local, refreshKey]);
+  const name = participant.name || participant.identity || 'Participant';
+  const mic = [...participant.trackPublications.values()].find((item) => item.source === Track.Source.Microphone);
+  const camera = [...participant.trackPublications.values()].find((item) => item.source === Track.Source.Camera);
+  return <div className="video-tile"><video ref={videoRef} autoPlay playsInline muted={local} className={hasVideo ? '' : 'hidden'} />{!hasVideo && <div className="video-placeholder"><strong>{name.slice(0, 1).toUpperCase()}</strong><span>Camera off</span></div>}<audio ref={audioRef} autoPlay /><span>{name}{local ? ' (You)' : ''}{participant.isSpeaking ? ' · Speaking' : ''}{mic?.isMuted ? ' · Muted' : ''}{camera?.isMuted ? ' · Camera off' : ''}</span></div>;
+}
 
 export default function MeetingRoom() {
-  const { roomId } = useParams(); const navigate = useNavigate(); const video = useRef(null); const local = useRef(null); const socket = useRef(null); const peers = useRef(new Map()); const [meeting, setMeeting] = useState(null); const [participants, setParticipants] = useState([]); const [remote, setRemote] = useState({}); const [messages, setMessages] = useState([]); const [message, setMessage] = useState(''); const [muted, setMuted] = useState(false); const [cameraOff, setCameraOff] = useState(false); const [sharing, setSharing] = useState(false); const [locked, setLocked] = useState(false); const [error, setError] = useState('');
-  useEffect(() => { let alive = true; async function start() { try { const { data } = await api.get(`/meetings/${roomId}`); setMeeting(data.meeting); setLocked(Boolean(data.meeting.locked)); local.current = await getMedia(setError); if (video.current) video.current.srcObject = local.current; const client = io(socketUrl, { withCredentials: true }); socket.current = client; client.on('connect_error', (e) => setError(getApiError({ code: 'ERR_NETWORK', message: e.message }))); client.on('meeting:error', (item) => setError(item.error)); client.on('meeting:participants', async ({ participants: list }) => { setParticipants(list); for (const item of list) await createOffer(item.socketId); }); client.on('meeting:participant-joined', (item) => setParticipants((items) => [...items, item])); client.on('meeting:participant-left', ({ socketId, name }) => { peers.current.get(socketId)?.close(); peers.current.delete(socketId); setRemote((items) => { const next = { ...items }; delete next[socketId]; return next; }); setParticipants((items) => items.filter((item) => item.socketId !== socketId)); setMessages((items) => [...items, { id: Date.now(), sender: 'System', message: `${name || 'Participant'} left` }]); }); client.on('meeting:chat', (item) => setMessages((items) => [...items, item])); client.on('meeting:reaction', (item) => setMessages((items) => [...items, { id: `${item.createdAt}-${item.sender}`, sender: item.sender, message: item.emoji }])); client.on('meeting:lock-changed', ({ locked: next }) => setLocked(next)); client.on('meeting:force-muted', (item) => { local.current?.getAudioTracks().forEach((track) => { track.enabled = false; }); setMuted(true); setError(item.message); }); client.on('meeting:removed', (item) => { setError(item.message); leave(); }); client.on('meeting:signal', handleSignal); client.emit('meeting:join', { roomId }); } catch (e) { if (alive) setError(e.response?.status === 401 ? 'Sign in before joining this private meeting.' : e.response?.status === 404 ? 'This meeting does not exist or has ended.' : getApiError(e, e.message || 'Unable to join the meeting')); } } start(); return () => { alive = false; leave(false); }; }, [roomId]);
-  function peer(target) { if (peers.current.has(target)) return peers.current.get(target); const connection = new RTCPeerConnection(); local.current?.getTracks().forEach((track) => connection.addTrack(track, local.current)); connection.onicecandidate = ({ candidate }) => candidate && socket.current?.emit('meeting:signal', { targetSocketId: target, signal: { type: 'candidate', candidate } }); connection.ontrack = ({ streams }) => setRemote((items) => ({ ...items, [target]: streams[0] })); peers.current.set(target, connection); return connection; }
-  async function createOffer(target) { const connection = peer(target); await connection.setLocalDescription(await connection.createOffer()); socket.current?.emit('meeting:signal', { targetSocketId: target, signal: { type: 'offer', sdp: connection.localDescription.sdp } }); }
-  async function handleSignal({ fromSocketId, signal }) { const connection = peer(fromSocketId); if (signal.type === 'offer') { await connection.setRemoteDescription(signal); await connection.setLocalDescription(await connection.createAnswer()); socket.current?.emit('meeting:signal', { targetSocketId: fromSocketId, signal: { type: 'answer', sdp: connection.localDescription.sdp } }); } else if (signal.type === 'answer') await connection.setRemoteDescription(signal); else await connection.addIceCandidate(signal.candidate); }
-  function sendChat(event) { event.preventDefault(); if (message.trim()) { socket.current?.emit('meeting:chat', { message: message.trim() }); setMessage(''); } }
-  function react(emoji) { socket.current?.emit('meeting:reaction', { emoji }); }
-  async function shareScreen() { if (sharing) return; try { const screen = await navigator.mediaDevices.getDisplayMedia({ video: true }); const track = screen.getVideoTracks()[0]; peers.current.forEach((connection) => connection.getSenders().find((sender) => sender.track?.kind === 'video')?.replaceTrack(track)); if (video.current) video.current.srcObject = new MediaStream([track, ...(local.current?.getAudioTracks() || [])]); track.onended = () => { const camera = local.current?.getVideoTracks()[0]; peers.current.forEach((connection) => connection.getSenders().find((sender) => sender.track?.kind === 'video')?.replaceTrack(camera)); if (video.current) video.current.srcObject = local.current; setSharing(false); }; setSharing(true); } catch { setError('Screen sharing was cancelled or blocked.'); } }
-  async function endMeeting() { await api.post(`/meetings/${roomId}/end`); leave(); }
-  function leave(redirect = true) { socket.current?.disconnect(); peers.current.forEach((connection) => connection.close()); local.current?.getTracks().forEach((track) => track.stop()); if (redirect) navigate('/meetings'); }
-  return <div className="meeting-room"><header className="meeting-header"><div><strong>{meeting?.title || 'Private meeting'}</strong><small>Host: {meeting?.host?.name || 'Meeting host'} · {participants.length + 1}/{meeting?.maxParticipants || 5} participants{locked ? ' · Locked' : ''}</small></div><button className="button ghost" onClick={() => navigator.clipboard.writeText(window.location.href)}><Copy size={16} /> Copy invite</button></header>{error && <div className="meeting-error">{error}</div>}<section className="call-layout"><div className="video-grid"><div className="video-tile"><video ref={video} autoPlay muted playsInline /><span>{meeting?.isHost ? `${meeting?.host?.name || 'Host'} (Host)` : 'You'}</span></div>{Object.entries(remote).map(([id, stream]) => <RemoteTile key={id} stream={stream} name={participants.find((item) => item.socketId === id)?.name} />)}</div><aside className="chat-panel"><h3>In-call chat</h3><div className="chat-messages">{messages.map((item) => <div key={item.id}><strong>{item.sender}</strong><span>{item.message}</span></div>)}</div><div className="reaction-bar" aria-label="Emoji reactions">{EMOJIS.map((emoji) => <button key={emoji} type="button" onClick={() => react(emoji)} aria-label={`Send ${emoji}`}>{emoji}</button>)}</div><form onSubmit={sendChat}><input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Message the group" /><button aria-label="Send"><Send size={16} /></button></form></aside></section><footer className="call-controls"><button className="control" onClick={() => { const next = !muted; local.current?.getAudioTracks().forEach((track) => { track.enabled = !next; }); setMuted(next); }}>{muted ? <MicOff /> : <Mic />}<span>{muted ? 'Unmute' : 'Mute'}</span></button><button className="control" onClick={() => { const next = !cameraOff; local.current?.getVideoTracks().forEach((track) => { track.enabled = !next; }); setCameraOff(next); }}>{cameraOff ? <CameraOff /> : <Camera />}<span>{cameraOff ? 'Camera on' : 'Camera off'}</span></button><button className="control" onClick={shareScreen}><MonitorUp /><span>{sharing ? 'Sharing' : 'Share screen'}</span></button>{meeting?.isHost && <button className="control danger" onClick={endMeeting}><PhoneOff /><span>End meeting</span></button>}<button className="control danger" onClick={leave}><PhoneOff /><span>Leave</span></button></footer>{meeting?.isHost && <div className="participant-list">{participants.map((item) => <span key={item.socketId}><button onClick={() => socket.current?.emit('meeting:mute', { targetSocketId: item.socketId })}><MicOff size={14} /> Mute {item.name}</button><button onClick={() => socket.current?.emit('meeting:kick', { targetSocketId: item.socketId })}><UserMinus size={14} /> Remove</button></span>)}</div>}</div>;
+  const { roomId } = useParams(); const navigate = useNavigate(); const roomRef = useRef(null); const socketRef = useRef(null); const meetingRef = useRef(null); const sessionId = useRef(crypto.randomUUID().replaceAll('-', '')); const leaving = useRef(false); const connecting = useRef(false);
+  const [meeting, setMeeting] = useState(null); const [participants, setParticipants] = useState([]); const [pending, setPending] = useState([]); const [messages, setMessages] = useState([]); const [message, setMessage] = useState(''); const [waiting, setWaiting] = useState(false); const [status, setStatus] = useState('connecting'); const [error, setError] = useState(''); const [muted, setMuted] = useState(false); const [micError, setMicError] = useState(''); const [cameraOff, setCameraOff] = useState(false); const [sharing, setSharing] = useState(false); const [refreshKey, setRefreshKey] = useState(0); const [showShare, setShowShare] = useState(false);
+  const refreshParticipants = useCallback(() => { const room = roomRef.current; if (!room) return; setParticipants([...room.remoteParticipants.values()]); setRefreshKey((value) => value + 1); }, []);
+
+  async function connectMedia() {
+    if (roomRef.current || leaving.current || connecting.current) return;
+    connecting.current = true;
+    try {
+      // Pre-request browser media permissions so the browser shows the allow/block
+      // prompt before LiveKit connects. We keep this stream alive until right before
+      // LiveKit re-acquires the devices — stopping it early caused a NotReadableError
+      // race condition where the OS hadn't released the device yet.
+      setStatus('requesting permissions');
+      let preStream = null;
+      try {
+        preStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      } catch (permErr) {
+        if (permErr.name === 'NotAllowedError') {
+          setStatus('failed');
+          setError('Microphone and camera permission was denied. Allow access in your browser settings and rejoin the meeting.');
+          return;
+        }
+        // Camera may be unavailable — try audio only
+        try {
+          preStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (audioErr) {
+          if (audioErr.name === 'NotAllowedError') {
+            setStatus('failed');
+            setError('Microphone permission was denied. Allow access in your browser settings and rejoin the meeting.');
+            return;
+          }
+          // No audio device found — continue and let LiveKit report the exact failure
+        }
+      }
+
+      setStatus('requesting LiveKit token'); const code = meetingRef.current?.requiresAccessCode ? window.prompt('Enter the meeting password') || '' : '';
+      const { data } = await api.post(`/meetings/${roomId}/media-token`, { sessionId: sessionId.current, accessCode: code });
+      if (data.mode !== 'livekit' || !data.url || !data.token) throw new Error('LiveKit is not configured on the server. Add LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET to backend/.env.');
+      const room = new Room({ adaptiveStream: true, dynacast: true });
+      roomRef.current = room;
+      room.on(RoomEvent.ParticipantConnected, refreshParticipants); room.on(RoomEvent.ParticipantDisconnected, refreshParticipants); room.on(RoomEvent.TrackSubscribed, refreshParticipants); room.on(RoomEvent.TrackUnsubscribed, refreshParticipants); room.on(RoomEvent.LocalTrackPublished, refreshParticipants); room.on(RoomEvent.LocalTrackUnpublished, refreshParticipants); room.on(RoomEvent.ActiveSpeakersChanged, refreshParticipants); room.on(RoomEvent.Reconnecting, () => { setStatus('reconnecting'); setError('Connection interrupted. Reconnecting…'); }); room.on(RoomEvent.Reconnected, () => { setStatus('connected'); setError(''); refreshParticipants(); }); room.on(RoomEvent.ConnectionStateChanged, (state) => { setStatus(state); if (state === 'disconnected') setError('LiveKit connection lost. Please check your network.'); });
+      await room.connect(data.url, data.token, { autoSubscribe: true });
+
+      // Release the pre-stream NOW — right before LiveKit re-acquires the device.
+      // Then wait 200ms so the OS fully releases the hardware before LiveKit grabs it.
+      if (preStream) { preStream.getTracks().forEach((t) => t.stop()); await new Promise((r) => setTimeout(r, 400)); }
+
+      let cameraReady = false; let microphoneReady = false; let micErr = null;
+      try { await room.localParticipant.setCameraEnabled(true); cameraReady = true; } catch { setCameraOff(true); }
+      try { await room.localParticipant.setMicrophoneEnabled(true); microphoneReady = true; } catch (err) { setMuted(true); micErr = err; }
+      setStatus('connected'); refreshParticipants();
+      if (!cameraReady && !microphoneReady) setError('Connected without camera or microphone. Check browser and Windows permissions, then use the controls to retry.');
+      else if (!cameraReady) setError('Connected without camera. Check camera permissions or connect a camera, then use Camera on to retry.');
+      else if (!microphoneReady) {
+        const errName = micErr?.name;
+        const reason = errName === 'NotAllowedError' ? 'permission' : 'device';
+        const msg = errName === 'NotAllowedError'
+          ? 'Microphone access was denied. Allow it in your browser settings, then click Retry Microphone.'
+          : errName === 'NotReadableError'
+          ? 'Microphone is in use by another app (Teams, Zoom, Discord, etc.). Close it and click Retry Microphone.'
+          : 'No microphone detected. Connect a microphone, then click Retry Microphone.';
+        setMicError(reason); setError(msg);
+      }
+    } catch (requestError) { await roomRef.current?.disconnect().catch(() => {}); roomRef.current = null; setStatus('failed'); const message = requestError.name === 'NotAllowedError' ? 'Camera and microphone permission was denied. Allow access in the browser and try again.' : getApiError(requestError, requestError.message || 'Unable to connect to the private call.'); setError(message); } finally { connecting.current = false; }
+  }
+
+
+  useEffect(() => {
+    let alive = true;
+    async function start() {
+      leaving.current = false;
+      try {
+        const { data } = await api.get(`/meetings/${roomId}`); if (!alive) return; meetingRef.current = data.meeting; setMeeting(data.meeting);
+        const socket = io(socketUrl, { withCredentials: true }); socketRef.current = socket;
+        let nonHostJoined = false;
+        socket.on('connect_error', (event) => { setStatus('disconnected'); setError(event.message || 'Meeting events are unavailable.'); }); socket.on('meeting:error', ({ error: nextError }) => { setStatus('denied'); setError(nextError || 'Unable to join this meeting.'); }); socket.on('meeting:waiting', ({ message: nextMessage }) => { setWaiting(true); setStatus('waiting for approval'); setError(nextMessage); }); socket.on('meeting:approved', () => { setWaiting(false); setError('The host approved your request.'); connectMedia(); }); socket.on('meeting:participants', () => { if (!data.meeting.isHost && !nonHostJoined) { nonHostJoined = true; connectMedia(); } }); socket.on('meeting:ended', ({ message: nextMessage }) => { setStatus('ended'); setError(nextMessage || 'This meeting has ended.'); roomRef.current?.disconnect(); roomRef.current = null; }); socket.on('meeting:force-muted', ({ message: nextMessage }) => { roomRef.current?.localParticipant.setMicrophoneEnabled(false); setMuted(true); setError(nextMessage || 'Your microphone was muted by the host.'); }); socket.on('meeting:rejected', ({ message: nextMessage }) => { setStatus('rejected'); setError(nextMessage || 'The host rejected your request.'); }); socket.on('meeting:guest-request', (request) => setPending((items) => items.some((item) => item.requestKey === request.requestKey) ? items : [...items, request])); socket.on('meeting:participant-left', ({ name }) => setMessages((items) => [...items, { id: `${Date.now()}-${name}`, sender: 'System', message: `${name || 'Participant'} left` }])); socket.on('meeting:chat', (item) => setMessages((items) => items.some((current) => current.id === item.id) ? items : [...items, item])); socket.on('meeting:reaction', (item) => setMessages((items) => [...items, { id: `${item.createdAt}-${item.sender}`, sender: item.sender, message: item.emoji }])); socket.on('meeting:removed', ({ message: nextMessage }) => { setError(nextMessage); leave(); }); socket.on('connect', () => socket.emit('meeting:join', { roomId, sessionId: sessionId.current }));
+        if (data.meeting.isHost) connectMedia();
+      } catch (requestError) { if (alive) { setStatus('denied'); setError(requestError.response?.status === 401 ? 'Sign in before joining this private meeting.' : getApiError(requestError, 'Unable to load the meeting.')); } }
+    }
+    start(); return () => { alive = false; leave(false); };
+  }, [roomId]);
+
+  function approve(request) { socketRef.current?.emit('meeting:guest-approve', { targetSocketId: request.socketId }); setPending((items) => items.filter((item) => item.requestKey !== request.requestKey)); }
+  function reject(request) { socketRef.current?.emit('meeting:guest-reject', { targetSocketId: request.socketId }); setPending((items) => items.filter((item) => item.requestKey !== request.requestKey)); }
+  async function retryMicrophone() { try { await roomRef.current?.localParticipant.setMicrophoneEnabled(true); setMuted(false); setMicError(''); setError(''); refreshParticipants(); } catch (requestError) { setError(requestError.name === 'NotAllowedError' ? 'Microphone permission was denied. Allow it in browser settings, then click Retry Microphone.' : 'No microphone found on this device. Connect one and click Retry Microphone.'); } }
+  async function toggleMicrophone() { const next = !muted; try { await roomRef.current?.localParticipant.setMicrophoneEnabled(!next); setMuted(next); setMicError(''); setError(''); refreshParticipants(); } catch (requestError) { setError(requestError.name === 'NotAllowedError' ? 'Microphone permission was denied. Allow it in the browser and try again.' : 'No microphone is available on this device.'); } }
+  async function toggleCamera() { const next = !cameraOff; try { await roomRef.current?.localParticipant.setCameraEnabled(!next); setCameraOff(next); setError(''); refreshParticipants(); } catch (requestError) { setError(requestError.name === 'NotAllowedError' ? 'Camera permission was denied. Allow it in the browser and try again.' : 'No camera is available on this device.'); } }
+  async function toggleScreenShare() { try { const next = !sharing; await roomRef.current?.localParticipant.setScreenShareEnabled(next, { audio: true }); setSharing(next); refreshParticipants(); } catch { setError('Screen sharing was cancelled or is not supported.'); } }
+  function sendChat(event) { event.preventDefault(); if (message.trim()) { socketRef.current?.emit('meeting:chat', { message: message.trim() }); setMessage(''); } }
+  async function endMeeting() { try { await api.post(`/meetings/${roomId}/end`); leave(); } catch (requestError) { setError(getApiError(requestError, 'Unable to end the meeting.')); } }
+  async function leave(redirect = true) { if (leaving.current) return; leaving.current = true; await api.post(`/meetings/${roomId}/leave`, { sessionId: sessionId.current }).catch(() => {}); await roomRef.current?.disconnect(); roomRef.current = null; socketRef.current?.disconnect(); if (redirect) navigate('/meetings'); }
+  const allParticipants = roomRef.current ? [roomRef.current.localParticipant, ...participants] : [];
+  const requestKey = (request) => request.requestKey || request.socketId || request.name;
+  return <div className="meeting-room">{showShare && <ShareModal url={window.location.href} title={meeting?.title || 'Private meeting'} onClose={() => setShowShare(false)} />}<header className="meeting-header"><div><strong>{meeting?.title || 'Private meeting'}</strong><small>Host: {meeting?.host?.name || 'Meeting host'} · {status} · {allParticipants.length}/{meeting?.maxParticipants || 5} participants</small><small>Room ID: {roomId}</small></div><button className="button ghost" onClick={() => setShowShare(true)}><Share2 size={16} /> Share invite</button></header>{error && <div className="meeting-error" role="alert"><span>{error}</span>{micError && roomRef.current && <button className="button ghost" style={{marginLeft:'0.75rem',flexShrink:0}} onClick={retryMicrophone}>↺ Retry Microphone</button>}</div>}{waiting && <div className="meeting-waiting" role="status">Waiting for the host to approve your request…</div>}{meeting?.isHost && pending.length > 0 && <section className="meeting-requests"><strong>People waiting to join</strong>{pending.map((request) => <div key={requestKey(request)}><span>{request.name} wants to join</span><button className="button primary" onClick={() => approve(request)}>Approve</button><button className="button ghost" onClick={() => reject(request)}>Reject</button></div>)}</section>}<section className="call-layout"><div className="video-grid">{allParticipants.map((participant) => <MediaTile key={participant.identity} participant={participant} local={participant === roomRef.current?.localParticipant} refreshKey={refreshKey} />)}</div><aside className="chat-panel"><h3><Users size={16} /> In-call chat</h3><div className="chat-messages">{messages.map((item) => <div key={item.id}><strong>{item.sender}</strong><span>{item.message}</span></div>)}</div><div className="reaction-bar">{EMOJIS.map((emoji) => <button key={emoji} type="button" onClick={() => socketRef.current?.emit('meeting:reaction', { emoji })}>{emoji}</button>)}</div><form onSubmit={sendChat}><input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Message the group" /><button aria-label="Send"><Send size={16} /></button></form></aside></section><footer className="call-controls"><button className="control" onClick={toggleMicrophone} disabled={!roomRef.current}>{muted ? <MicOff /> : <Mic />}<span>{muted ? 'Unmute' : 'Mute'}</span></button><button className="control" onClick={toggleCamera} disabled={!roomRef.current}>{cameraOff ? <CameraOff /> : <Camera />}<span>{cameraOff ? 'Camera on' : 'Camera off'}</span></button><button className="control" onClick={toggleScreenShare} disabled={!roomRef.current}><MonitorUp /><span>{sharing ? 'Stop sharing' : 'Share screen'}</span></button>{meeting?.isHost && <button className="control danger" onClick={endMeeting}><PhoneOff /><span>End meeting</span></button>}<button className="control danger" onClick={() => leave()}><PhoneOff /><span>Leave</span></button></footer>{meeting?.isHost && <div className="participant-list">{participants.map((participant) => <span key={participant.identity}><button onClick={() => socketRef.current?.emit('meeting:mute', { targetSocketId: participant.identity })}><MicOff size={14} /> Mute {participant.name}</button><button onClick={() => socketRef.current?.emit('meeting:kick', { targetSocketId: participant.identity })}><UserMinus size={14} /> Remove</button></span>)}</div>}</div>;
 }

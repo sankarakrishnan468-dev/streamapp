@@ -25,3 +25,25 @@ export async function getPublicProfile(req, res, next) {
     res.json({ user, videos });
   } catch (error) { next(error); }
 }
+
+export async function searchUsers(req, res, next) {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!query || query.length < 1) {
+      return res.json({ users: [] });
+    }
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'i');
+    const users = await User.find({
+      status: 'active',
+      _id: { $ne: req.user._id },
+      $or: [{ username: regex }, { name: regex }],
+    })
+      .select('name username avatarUrl')
+      .limit(10);
+    return res.json({ users });
+  } catch (error) {
+    return next(error);
+  }
+}
+
