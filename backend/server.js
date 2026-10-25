@@ -22,11 +22,33 @@ import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 validateEnvironment();
 
+export function getCorsOrigin(origin, callback) {
+  if (!origin) return callback(null, true);
+  if (env.frontendUrls.includes(origin)) return callback(null, true);
+  if (env.nodeEnv !== 'production') {
+    try {
+      const parsed = new URL(origin);
+      if (
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname.startsWith('192.168.') ||
+        parsed.hostname.startsWith('10.') ||
+        parsed.hostname.startsWith('172.')
+      ) {
+        return callback(null, true);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return callback(null, false);
+}
+
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
-  app.use(cors({ origin: env.frontendUrls, credentials: true }));
+  app.use(cors({ origin: getCorsOrigin, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
@@ -50,7 +72,7 @@ export function createApp() {
 export function createServer() {
   const app = createApp();
   const httpServer = http.createServer(app);
-  const io = new SocketServer(httpServer, { cors: { origin: env.frontendUrls, credentials: true } });
+  const io = new SocketServer(httpServer, { cors: { origin: getCorsOrigin, credentials: true } });
   installSocketAuth(io);
   installMeetingSockets(io);
   installStreamSockets(io);
