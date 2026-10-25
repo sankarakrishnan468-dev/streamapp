@@ -4,7 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { createComment, deleteVideo, getVideo, listComments, listHistory, listOwnedVideos, listSaved, listVideos, saveHistory, toggleLike, toggleSaved, uploadRecordedVideo } from '../controllers/video.controller.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 }, fileFilter: (_req, file, callback) => callback(null, file.mimetype.startsWith('video/')) });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 * 1024 }, fileFilter: (_req, file, callback) => callback(null, file.mimetype.startsWith('video/')) });
 router.get('/', listVideos);
 router.get('/mine', requireAuth, listOwnedVideos);
 router.get('/saved', requireAuth, listSaved);

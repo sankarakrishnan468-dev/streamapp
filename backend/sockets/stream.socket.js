@@ -16,7 +16,7 @@ export function installStreamSockets(io) {
       const active = viewers.get(streamId) || new Map();
       const isStreamer = mode === 'studio' && Boolean(socket.user?._id && stream.owner.toString() === socket.user._id.toString());
       if (mode === 'studio' && !isStreamer) return socket.emit('stream:error', { error: 'Only the stream owner can open the studio' });
-      if (!active.has(socket.id) && !isStreamer && audience(active).length >= stream.viewerLimit) return socket.emit('stream:error', { error: 'This stream has reached its 50 viewer limit' });
+      if (!active.has(socket.id) && !isStreamer && audience(active).length >= stream.viewerLimit) return socket.emit('stream:error', { error: `This stream has reached its ${stream.viewerLimit} viewer limit` });
       active.set(socket.id, { socketId: socket.id, name: socket.user?.name || 'Guest', isStreamer, joinedAt: new Date() }); viewers.set(streamId, active); socket.join(room(streamId)); socket.data.streamId = streamId; socket.data.isStreamer = isStreamer;
       emitPresence(io, streamId, active); emitReactions(io, streamId);
       if (isStreamer) audience(active).forEach((viewer) => io.to(socket.id).emit('stream:viewer-joined', { viewerId: viewer.socketId }));
