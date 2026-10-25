@@ -48,7 +48,24 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
-  app.use(cors({ origin: getCorsOrigin, credentials: true }));
+  const allowedOrigins = [
+    'https://lively-caramel-4dddfe.netlify.app',
+    'http://localhost:5173',
+  ];
+
+  app.use(cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.warn('[CORS BLOCKED]', origin);
+      return callback(null, false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
