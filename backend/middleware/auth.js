@@ -4,12 +4,15 @@ import { env } from '../config/env.js';
 
 export async function requireAuth(req, res, next) {
   try {
-    const token = req.cookies[env.cookieName];
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+    const token = bearerToken || req.cookies[env.cookieName];
     if (!token) return res.status(401).json({ error: 'Authentication required' });
     const payload = jwt.verify(token, env.jwtSecret);
     const user = await User.findById(payload.sub);
     if (!user || user.status !== 'active') return res.status(401).json({ error: 'Invalid or inactive session' });
     req.user = user;
+    req.token = token;
     return next();
   } catch (error) {
     return res.status(401).json({ error: 'Invalid or expired session' });

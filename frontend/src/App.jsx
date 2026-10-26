@@ -31,7 +31,7 @@ import { io } from "socket.io-client";
 import MeetingCreate from "./pages/meetings/MeetingCreate.jsx";
 import MeetingRoom from "./pages/meetings/MeetingRoom.jsx";
 import MeetingViewer from "./pages/meetings/MeetingViewer.jsx";
-import { api, getApiError, socketUrl } from "./services/api.js";
+import { api, clearStoredToken, getApiError, getSocketOptions, setStoredToken, socketUrl } from "./services/api.js";
 import StreamCreate from "./pages/streaming/StreamCreate.jsx";
 import StreamViewer from "./pages/streaming/StreamViewer.jsx";
 import StreamStudio from "./pages/streaming/StreamStudio.jsx";
@@ -79,7 +79,10 @@ export function Shell({ children }) {
   useEffect(() => {
     api
       .get("/auth/me")
-      .then(({ data }) => setUser(data.user))
+      .then(({ data }) => {
+        setUser(data.user);
+        if (data.token) setStoredToken(data.token);
+      })
       .catch(() => setUser(null));
   }, [location.pathname]);
   // Key socket on stable user _id only — not the full user object —
@@ -87,12 +90,13 @@ export function Shell({ children }) {
   const userId = user?._id ?? null;
   useEffect(() => {
     if (!userId) { setInvitation(null); return undefined; }
-    const client = io(socketUrl, { withCredentials: true });
+    const client = io(socketUrl, getSocketOptions());
     client.on("meeting:invitation", setInvitation);
     return () => client.disconnect();
   }, [userId]);
   async function logout() {
     await api.post("/auth/logout").catch(() => {});
+    clearStoredToken();
     setUser(null);
     navigate("/");
   }
@@ -481,7 +485,8 @@ function AuthPage({ mode }) {
     event.preventDefault();
     setStatus({ loading: true, error: "" });
     try {
-      await api.post(`/auth/${mode}`, form);
+      const { data } = await api.post(`/auth/${mode}`, form);
+      if (data?.token) setStoredToken(data.token);
       navigate("/dashboard");
     } catch (error) {
       setStatus({

@@ -49,8 +49,11 @@ export function createApp() {
   app.disable('x-powered-by');
   app.use(helmet());
   const allowedOrigins = [
-    'https://lively-caramel-4dddfe.netlify.app',
-    'http://localhost:5173',
+    ...new Set([
+      'https://lively-caramel-4dddfe.netlify.app',
+      'http://localhost:5173',
+      ...env.frontendUrls,
+    ]),
   ];
 
   app.use(cors({

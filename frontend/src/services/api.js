@@ -28,10 +28,53 @@ function readIceServers() {
 
 export const rtcConfiguration = { iceServers: readIceServers(), iceCandidatePoolSize: 10 };
 
+export function getStoredToken() {
+  try {
+    return localStorage.getItem('streamconnect_token') || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setStoredToken(token) {
+  try {
+    if (token) localStorage.setItem('streamconnect_token', token);
+    else localStorage.removeItem('streamconnect_token');
+  } catch {
+    // ignore
+  }
+}
+
+export function clearStoredToken() {
+  try {
+    localStorage.removeItem('streamconnect_token');
+  } catch {
+    // ignore
+  }
+}
+
+export function getSocketOptions(extra = {}) {
+  const token = getStoredToken();
+  return {
+    withCredentials: true,
+    auth: token ? { token } : undefined,
+    ...extra,
+  };
+}
+
 export const api = axios.create({
   baseURL: `${backendOrigin}/api`,
   withCredentials: true,
   timeout: 10000,
+});
+
+api.interceptors.request.use((config) => {
+  const token = getStoredToken();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 export function getApiError(error, fallback = 'Request failed') {
