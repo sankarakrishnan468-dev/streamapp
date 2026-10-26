@@ -127,11 +127,10 @@ html[data-theme='light'] input, html[data-theme='light'] textarea, html[data-the
 .video-play { background: #6d5dfc; left: 50%; position: absolute; top: 50%; transform: translate(-50%, -50%); z-index: 1; }
 .call-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) 280px; margin: auto; max-width: 1400px; }
 .video-grid { align-content: start; display: grid; gap: .8rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.video-tile { background: #18181b; border: 1px solid #ffffff14; border-radius: .8rem; min-height: 220px; overflow: hidden; position: relative; }
-.video-tile video { height: 100%; min-height: 220px; object-fit: cover; width: 100%; }
-.video-tile span { background: #09090bcc; bottom: .5rem; left: .5rem; padding: .3rem .5rem; position: absolute; }
-.video-tile video.hidden { display: none; }
-.video-placeholder { align-items: center; background: #18181b; display: flex; flex: 1; flex-direction: column; gap: .5rem; justify-content: center; color: #a1a1aa; }
+.video-tile { background: #18181b; border: 1px solid #ffffff14; border-radius: .8rem; min-height: 240px; aspect-ratio: 16 / 9; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; }
+.video-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.video-tile span.participant-label { background: #09090bcc; border-radius: 0.35rem; bottom: .5rem; left: .5rem; padding: .3rem .55rem; position: absolute; z-index: 5; font-size: 0.8rem; color: #fff; max-width: calc(100% - 1rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-placeholder { align-items: center; background: #18181b; display: flex; flex-direction: column; gap: .5rem; justify-content: center; color: #a1a1aa; width: 100%; height: 100%; position: absolute; inset: 0; }
 .video-placeholder strong { align-items: center; background: #4f46e5; border-radius: 50%; color: white; display: flex; font-size: 2rem; height: 4rem; justify-content: center; width: 4rem; }
 .meeting-waiting, .meeting-requests { background: #27272a; border: 1px solid #ffffff1a; border-radius: .75rem; margin: .75rem 0; padding: .8rem 1rem; }
 .meeting-waiting { align-items: center; display: flex; gap: .6rem; }

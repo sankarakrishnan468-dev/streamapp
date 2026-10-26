@@ -16,7 +16,11 @@ function cookieValue(header, name) {
 export function installSocketAuth(io) {
   io.use(async (socket, next) => {
     try {
-      const token = cookieValue(socket.handshake.headers.cookie, env.cookieName);
+      const authHeader = socket.handshake.headers.authorization;
+      const bearer = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+      const handshakeToken = socket.handshake.auth?.token;
+      const cookieToken = cookieValue(socket.handshake.headers.cookie, env.cookieName);
+      const token = handshakeToken || bearer || cookieToken;
       if (!token) { socket.user = null; return next(); }
       const payload = jwt.verify(token, env.jwtSecret);
       const user = await User.findById(payload.sub);

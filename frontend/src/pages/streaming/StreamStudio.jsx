@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Eye, Mic, MicOff, Pause, Play, Square, UserMinus } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
-import { api, getApiError, rtcConfiguration, socketUrl } from '../../services/api.js';
+import { api, getApiError, getSocketOptions, rtcConfiguration, socketUrl } from '../../services/api.js';
 
 export default function StreamStudio() {
   const { id } = useParams(); const navigate = useNavigate();
@@ -21,7 +21,7 @@ export default function StreamStudio() {
           setError(mediaError(cameraError));
           return;
         }
-        const client = io(socketUrl, { withCredentials: true }); socket.current = client;
+        const client = io(socketUrl, getSocketOptions()); socket.current = client;
         client.on('connect', () => client.emit('stream:join', { streamId: id, mode: 'studio' }));
         client.on('connect_error', () => setError('Live connection is offline. Check that the backend is running.'));
         client.on('stream:error', ({ error: nextError }) => setError(nextError || 'Stream connection failed.'));
