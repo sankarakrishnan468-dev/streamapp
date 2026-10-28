@@ -137,11 +137,13 @@ export async function getMeeting(req, res, next) {
     );
     const isInvitedViewer =
       meeting.invitedViewer?._id.toString() === currentUserId;
+    const isApprovedUser = meeting.approvedUsers?.some(
+      (entry) => entry.user?.toString() === currentUserId
+    );
     const hasInviteList =
       (meeting.invitedUsers && meeting.invitedUsers.length > 0) ||
       Boolean(meeting.invitedViewer);
-
-    if (hasInviteList && !isHost && !isInvitedUser && !isInvitedViewer)
+    if (hasInviteList && !isHost && !isInvitedUser && !isInvitedViewer && !isApprovedUser && !meeting.waitingRoom)
       return res
         .status(403)
         .json({ error: "You are not invited to this private call" });
@@ -156,6 +158,7 @@ export async function getMeeting(req, res, next) {
         invitedViewer: meeting.invitedViewer,
         isHost,
         isInvited: isInvitedUser || isInvitedViewer,
+        isApproved: isHost || Boolean(isApprovedUser),
         locked: meeting.locked,
         waitingRoom: meeting.waitingRoom,
         requiresAccessCode: Boolean(meeting.accessCodeHash),
@@ -255,7 +258,8 @@ export async function createMediaToken(req, res, next) {
       (meeting.invitedUsers && meeting.invitedUsers.length > 0) ||
       Boolean(meeting.invitedViewer);
 
-    if (hasInviteList && !isHost && !isInvitedUser && !isInvitedViewer)
+    const isApproved = meeting.approvedUsers?.some((entry) => entry.user?.toString() === userId);
+    if (hasInviteList && !isHost && !isInvitedUser && !isInvitedViewer && !isApproved && !meeting.waitingRoom)
       return res
         .status(403)
         .json({ error: "You are not invited to this private call" });
@@ -263,8 +267,7 @@ export async function createMediaToken(req, res, next) {
     if (meeting.locked && !isHost)
       return res.status(423).json({ error: "This meeting is locked" });
 
-    const isApproved = meeting.approvedUsers?.some((entry) => entry.user.toString() === userId);
-    if (meeting.waitingRoom && !isHost && !isApproved)
+    if (!isHost && !isApproved && meeting.waitingRoom)
       return res.status(403).json({ error: "The host must approve your request before you can join" });
 
     if (
@@ -285,9 +288,20 @@ export async function createMediaToken(req, res, next) {
         .status(400)
         .json({ error: "A valid meeting session is required" });
 
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
     await Meeting.updateOne(
       { _id: meeting._id },
-      { $pull: { activeParticipants: { user: req.user._id } } },
+      {
+        $pull: {
+          activeParticipants: {
+            $or: [
+              { user: req.user._id },
+              { sessionId },
+              { joinedAt: { $lt: twoHoursAgo } },
+            ],
+          },
+        },
+      },
     );
 
     const admitted = await Meeting.findOneAndUpdate(
@@ -318,8 +332,9 @@ export async function createMediaToken(req, res, next) {
         error: `This meeting is full (maximum ${meeting.maxParticipants} participants)`,
       });
 
+    const participantIdentity = `${userId}_${sessionId}`;
     const token = new AccessToken(env.livekitApiKey, env.livekitApiSecret, {
-      identity: userId,
+      identity: participantIdentity,
       name: req.user.name || req.user.username || "Participant",
       ttl: "30m",
     });

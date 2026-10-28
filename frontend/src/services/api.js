@@ -1,9 +1,14 @@
 import axios from 'axios';
 
+const DEFAULT_PRODUCTION_BACKEND = 'https://streamapp-1.onrender.com';
+
 export const backendOrigin = import.meta.env.DEV
   ? `http://${window.location.hostname || 'localhost'}:5001`
-  : (import.meta.env.VITE_API_URL || 'http://localhost:5001/api').replace(/\/api\/?$/, '');
-export const socketUrl = import.meta.env.DEV ? backendOrigin : (import.meta.env.VITE_SOCKET_URL || backendOrigin);
+  : (import.meta.env.VITE_API_URL || `${DEFAULT_PRODUCTION_BACKEND}/api`).trim().replace(/\/api\/?$/, '');
+
+export const socketUrl = import.meta.env.DEV
+  ? backendOrigin
+  : (import.meta.env.VITE_SOCKET_URL || backendOrigin || DEFAULT_PRODUCTION_BACKEND).trim().replace(/\/+$/, '');
 
 function readIceServers() {
   const configured = import.meta.env.VITE_WEBRTC_ICE_SERVERS;
@@ -15,7 +20,13 @@ function readIceServers() {
       // Fall back to the individual environment variables below.
     }
   }
-  const servers = [{ urls: import.meta.env.VITE_STUN_URL || 'stun:stun.l.google.com:19302' }];
+  const defaultStuns = [
+    import.meta.env.VITE_STUN_URL || 'stun:stun.l.google.com:19302',
+    'stun:stun1.l.google.com:19302',
+    'stun:stun2.l.google.com:19302',
+    'stun:global.stun.twilio.com:3478',
+  ];
+  const servers = defaultStuns.map((url) => ({ urls: url }));
   if (import.meta.env.VITE_TURN_URL) {
     servers.push({
       urls: import.meta.env.VITE_TURN_URL,
@@ -57,6 +68,7 @@ export function getSocketOptions(extra = {}) {
   const token = getStoredToken();
   return {
     withCredentials: true,
+    transports: ['websocket', 'polling'],
     auth: token ? { token } : undefined,
     ...extra,
   };
