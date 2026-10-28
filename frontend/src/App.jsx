@@ -3,11 +3,13 @@ import {
   ArrowRight,
   Bell,
   Bookmark,
+  Calendar,
   Clock3,
   Compass,
   Home as HomeIcon,
   LogOut,
   Menu,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -15,7 +17,9 @@ import {
   Search,
   Settings,
   Sparkles,
+  Sun,
   Upload,
+  User,
   Users,
   Video,
   X,
@@ -57,16 +61,18 @@ import {
 
 const mainNavigation = [
   { to: "/", label: "Home", icon: HomeIcon },
-  { to: "/explore", label: "Explore Videos", icon: Compass },
   { to: "/live", label: "Live Streams", icon: Radio },
+  { to: "/explore", label: "Explore Videos", icon: Compass },
   { to: "/meetings", label: "Private Meetings", icon: Users },
 ];
+
 const creatorNavigation = [
-  { to: "/live/create", label: "Create Live Stream", icon: Radio },
+  { to: "/live/create", label: "Go Live", icon: Radio },
   { to: "/videos/upload", label: "Upload Video", icon: Upload },
-  { to: "/notifications", label: "Notifications", icon: Bell },
+  { to: "/creator-dashboard", label: "My Studio", icon: Video },
   { to: "/videos/history", label: "Watch History", icon: Clock3 },
-  { to: "/videos/saved", label: "Saved Videos", icon: Bookmark },
+  { to: "/videos/saved", label: "Saved Playlists", icon: Bookmark },
+  { to: "/notifications", label: "Notifications", icon: Bell },
 ];
 
 export function Shell({ children }) {
@@ -76,6 +82,9 @@ export function Shell({ children }) {
   const [drawer, setDrawer] = useState(false);
   const [user, setUser] = useState(null);
   const [invitation, setInvitation] = useState(null);
+  const [topSearch, setTopSearch] = useState("");
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+
   useEffect(() => {
     api
       .get("/auth/me")
@@ -85,8 +94,7 @@ export function Shell({ children }) {
       })
       .catch(() => setUser(null));
   }, [location.pathname]);
-  // Key socket on stable user _id only — not the full user object —
-  // so navigation (which re-fetches user) does NOT tear down the socket.
+
   const userId = user?._id ?? null;
   useEffect(() => {
     if (!userId) { setInvitation(null); return undefined; }
@@ -94,14 +102,17 @@ export function Shell({ children }) {
     client.on("meeting:invitation", setInvitation);
     return () => client.disconnect();
   }, [userId]);
+
   async function logout() {
     await api.post("/auth/logout").catch(() => {});
     clearStoredToken();
     setUser(null);
     navigate("/");
   }
+
   const active = (to) =>
     to === "/" ? location.pathname === "/" : location.pathname.startsWith(to);
+
   const navLink = (item) => (
     <Link
       key={item.to}
@@ -114,25 +125,35 @@ export function Shell({ children }) {
       <span>{item.label}</span>
     </Link>
   );
+
+  const handleTopSearch = (e) => {
+    e.preventDefault();
+    if (topSearch.trim()) {
+      navigate(`/explore?search=${encodeURIComponent(topSearch.trim())}`);
+    }
+  };
+
   return (
     <div
       className={`app-layout${collapsed ? " sidebar-collapsed" : ""}${drawer ? " drawer-open" : ""}`}
     >
+      {/* Mobile Top App Bar */}
       <div className="mobile-bar">
         <button
           className="icon-button"
           onClick={() => setDrawer(true)}
           aria-label="Open navigation"
         >
-          <Menu size={21} />
+          <Menu size={22} />
         </button>
         <Link className="brand" to="/">
           <span className="brand-mark">
             <Radio size={17} />
           </span>
-          StreamConnect
+          <span>StreamConnect</span>
         </Link>
       </div>
+
       {drawer && (
         <button
           className="drawer-backdrop"
@@ -140,7 +161,52 @@ export function Shell({ children }) {
           aria-label="Close navigation"
         />
       )}
-      {invitation && <div className="meeting-invitation" role="status"><span><strong>{invitation.host?.name || "A user"}</strong> invited you to <strong>{invitation.title}</strong>.</span><Link className="button primary" to={`/meetings/${invitation.roomId}`} onClick={() => setInvitation(null)}>Join call</Link><button className="button ghost" onClick={() => setInvitation(null)}>Dismiss</button></div>}
+
+      {/* Real-time Meeting Invitation Banner */}
+      {invitation && (
+        <div
+          style={{
+            position: "fixed",
+            top: "1rem",
+            right: "1rem",
+            zIndex: 100,
+            backgroundColor: "rgba(30, 27, 75, 0.95)",
+            backdropFilter: "blur(8px)",
+            border: "1px solid rgba(139, 92, 246, 0.5)",
+            borderRadius: "0.875rem",
+            padding: "1rem 1.25rem",
+            boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            gap: "1rem",
+          }}
+          role="status"
+        >
+          <div style={{ fontSize: "0.85rem" }}>
+            <strong style={{ color: "#c084fc" }}>{invitation.host?.name || "A creator"}</strong> invited you to{" "}
+            <strong>{invitation.title}</strong>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <Link
+              className="button primary"
+              to={`/meetings/${invitation.roomId}`}
+              onClick={() => setInvitation(null)}
+              style={{ padding: "0.45rem 0.85rem", fontSize: "0.8rem" }}
+            >
+              Join Call
+            </Link>
+            <button
+              className="button ghost"
+              onClick={() => setInvitation(null)}
+              style={{ padding: "0.45rem 0.75rem", fontSize: "0.8rem" }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-head">
           <Link className="brand" to="/" onClick={() => setDrawer(false)}>
@@ -151,14 +217,10 @@ export function Shell({ children }) {
           </Link>
           <button
             className="icon-button sidebar-toggle"
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={() => setCollapsed((v) => !v)}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {collapsed ? (
-              <PanelLeftOpen size={18} />
-            ) : (
-              <PanelLeftClose size={18} />
-            )}
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
           </button>
           <button
             className="icon-button drawer-close"
@@ -168,100 +230,99 @@ export function Shell({ children }) {
             <X size={20} />
           </button>
         </div>
+
         <Link
           className="new-meeting"
           to="/meetings"
           onClick={() => setDrawer(false)}
         >
-          <Plus size={17} />
+          <Plus size={18} />
           <span>New Meeting</span>
         </Link>
+
         <nav className="side-nav">
           <div className="side-label">Workspace</div>
           {mainNavigation.map(navLink)}
-          <div className="side-label">Create & Library</div>
+          <div className="side-label">Creator Studio</div>
           {creatorNavigation.map(navLink)}
         </nav>
-        <div className="sidebar-extra">
-          <div className="side-label">Recent</div>
-          <Link className="mini-link" to="/meetings">
-            <Users size={15} />
-            <span>Recent meetings</span>
-          </Link>
-          <Link className="mini-link" to="/videos/history">
-            <Clock3 size={15} />
-            <span>Recently watched</span>
-          </Link>
-          <Link className="mini-link" to="/creator-dashboard">
-            <Radio size={15} />
-            <span>My streams</span>
-          </Link>
-          <Link className="mini-link" to="/videos/saved">
-            <Bookmark size={15} />
-            <span>My playlists</span>
-          </Link>
-        </div>
+
         <div className="sidebar-footer">
-          <Link className="profile-mini" to="/profile">
+          <div className="profile-mini">
             <span className="avatar-small">
               {user?.name?.slice(0, 1).toUpperCase() || "G"}
             </span>
             <span className="profile-copy">
-              <strong>{user?.name || "Guest user"}</strong>
-              <small>
-                {user?.username
-                  ? `@${user.username}`
-                  : "Sign in to personalize"}
-              </small>
+              <strong>{user?.name || "Guest User"}</strong>
+              <small>{user?.username ? `@${user.username}` : "Sign in to broadcast"}</small>
             </span>
-          </Link>
+          </div>
+
           <div className="footer-actions">
             <Link className="mini-link" to="/profile">
               <Settings size={16} />
-              <span>Account settings</span>
+              <span>Settings</span>
             </Link>
             <div className="theme-row">
               <span>
-                <Sparkles size={16} /> Theme
+                <Sparkles size={16} /> Appearance
               </span>
               <ThemeToggle />
             </div>
             {user ? (
               <button className="mini-link logout-button" onClick={logout}>
                 <LogOut size={16} />
-                <span>Log out</span>
+                <span>Sign Out</span>
               </button>
             ) : (
               <Link className="mini-link" to="/login">
                 <LogOut size={16} />
-                <span>Sign in</span>
+                <span>Sign In</span>
               </Link>
             )}
           </div>
         </div>
       </aside>
+
+      {/* Main Content Area & Sticky Top Bar */}
       <div className="app-content">
         <header className="content-header">
-          <div className="breadcrumb">
-            {location.pathname === "/" ? "Workspace" : "StreamConnect"}{" "}
-            <span>/</span>{" "}
-            {location.pathname === "/"
-              ? "Home"
-              : location.pathname.split("/").filter(Boolean).join(" / ")}
-          </div>
+          {/* Global Search Bar */}
+          <form className="header-search" onSubmit={handleTopSearch}>
+            <Search size={16} style={{ color: "var(--text-muted)", shrink: 0 }} />
+            <input
+              value={topSearch}
+              onChange={(e) => setTopSearch(e.target.value)}
+              placeholder="Search streams, videos, topics..."
+            />
+          </form>
+
+          {/* Quick Header CTAs */}
           <div className="header-actions">
-            <button
-              className="icon-button"
-              aria-label="Search"
-              onClick={() => navigate("/explore")}
-            >
-              <Search size={19} />
-            </button>
-            <Link className="button primary header-cta" to="/live/create">
-              <Radio size={16} /> Go live
+            <Link className="button ghost" to="/meetings" title="Create or join meeting">
+              <Users size={16} />
+              <span className="hidden sm:inline">Meetings</span>
             </Link>
+            <Link className="button primary" to="/live/create" title="Go Live">
+              <Radio size={16} />
+              <span className="hidden sm:inline">Go Live</span>
+            </Link>
+            <Link className="icon-button" to="/notifications" aria-label="Notifications">
+              <Bell size={18} />
+            </Link>
+
+            {user ? (
+              <Link to="/profile" className="avatar-small" style={{ width: "2rem", height: "2rem", fontSize: "0.8rem" }}>
+                {user.name.charAt(0).toUpperCase()}
+              </Link>
+            ) : (
+              <Link to="/login" className="button secondary" style={{ fontSize: "0.8rem", padding: "0.45rem 0.85rem" }}>
+                Sign In
+              </Link>
+            )}
           </div>
         </header>
+
         <main>{children}</main>
       </div>
     </div>
@@ -270,302 +331,240 @@ export function Shell({ children }) {
 
 function Home() {
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
   const [streams, setStreams] = useState([]);
   const [videos, setVideos] = useState([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     Promise.all([
       api.get("/streams/live"),
       api.get("/videos", { params: { limit: 8 } }),
     ])
       .then(([live, library]) => {
-        setStreams(live.data.streams);
-        setVideos(library.data.videos);
+        setStreams(live.data.streams || []);
+        setVideos(library.data.videos || []);
       })
-      .catch((requestError) =>
-        setError(getApiError(requestError, "Unable to load your workspace")),
-      );
+      .catch((err) => setError(getApiError(err, "Unable to load dashboard feed")))
+      .finally(() => setLoading(false));
   }, []);
-  function search(event) {
-    event.preventDefault();
-    navigate(
-      `/explore${query.trim() ? `?search=${encodeURIComponent(query.trim())}` : ""}`,
-    );
-  }
+
   return (
     <Shell>
       <div className="home-page">
-        <section className="welcome-panel">
+        {/* Modern Welcome Banner */}
+        <section className="welcome-hero">
           <div>
-            <div className="eyebrow">
-              <span className="pulse" /> YOUR CREATOR WORKSPACE
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", fontSize: "0.75rem", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--accent-secondary)" }}>
+              <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: "50%", backgroundColor: "var(--accent-live)", boxShadow: "0 0 8px var(--accent-live)" }} />
+              Real-time Video Platform
             </div>
             <h1>
-              Make space for
+              Stream live, meet privately,
               <br />
-              <em>great moments.</em>
+              <em>connect effortlessly.</em>
             </h1>
             <p>
-              Meet privately, go live, and build your video library in one calm,
-              connected workspace.
+              High-definition interactive live streaming, secure WebRTC Google Meet-style private calls, and smart AI video analytics.
             </p>
             <div className="hero-actions">
-              <Link className="button primary large" to="/meetings">
-                <Users size={17} /> Create meeting
+              <Link className="button primary large" to="/live/create">
+                <Radio size={18} /> Start Streaming
               </Link>
-              <Link className="button ghost large" to="/live/create">
-                <Radio size={17} /> Go live
+              <Link className="button secondary large" to="/meetings">
+                <Users size={18} /> Create Meeting
+              </Link>
+              <Link className="button ghost large" to="/explore">
+                <Compass size={18} /> Explore Videos
               </Link>
             </div>
           </div>
-          <div className="welcome-orb">
-            <Radio size={54} />
-          </div>
         </section>
-        <form className="home-search" onSubmit={search}>
-          <Search size={18} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search videos, creators, and streams"
-          />
-          <button className="button primary">Search</button>
-        </form>
-        {error && <div className="form-error">{error}</div>}
-        <SectionHeading title="Currently live" action="View all" to="/live" />
-        {streams.length ? (
-          <div className="live-strip">
-            {streams.slice(0, 4).map((stream) => (
-              <Link
-                className="live-card"
-                to={`/live/${stream._id}`}
-                key={stream._id}
-              >
-                <div className="live-card-image">
-                  {stream.thumbnailUrl ? (
-                    <img src={stream.thumbnailUrl} alt="" />
-                  ) : (
-                    <Radio size={28} />
-                  )}
-                  <span className="live-pill">LIVE</span>
-                </div>
-                <strong>{stream.title}</strong>
-                <small>
-                  {stream.owner?.name || "Creator"} · {stream.category}
-                </small>
-              </Link>
-            ))}
-          </div>
-        ) : (
-          <EmptyPanel
-            icon={<Radio size={22} />}
-            text="No one is live right now. Start a broadcast and invite your audience."
-            action="Start a live stream"
-            to="/live/create"
-          />
-        )}
-        <SectionHeading
-          title="Recommended videos"
-          action="Explore library"
-          to="/explore"
-        />
-        <VideoGrid videos={videos.slice(0, 4)} />
-        <div className="home-columns">
-          <div>
-            <SectionHeading
-              title="Recent meetings"
-              action="All meetings"
-              to="/meetings"
-            />
-            <EmptyPanel
-              compact
-              icon={<Users size={20} />}
-              text="Your recent meeting activity will appear here."
-              action="New meeting"
-              to="/meetings"
-            />
-          </div>
-          <div>
-            <SectionHeading
-              title="Recently uploaded"
-              action="Manage videos"
-              to="/videos/manage"
-            />
-            <VideoGrid videos={videos.slice(4, 8)} compact />
-          </div>
+
+        {/* Quick Access Control Dashboard Cards */}
+        <div className="quick-action-grid">
+          <Link to="/live/create" className="quick-action-card">
+            <div className="quick-action-icon"><Radio size={20} /></div>
+            <h3>Broadcast Live</h3>
+            <p>Stream directly with real-time chat, viewer counts, and reactions.</p>
+          </Link>
+
+          <Link to="/meetings" className="quick-action-card">
+            <div className="quick-action-icon"><Users size={20} /></div>
+            <h3>Private Meetings</h3>
+            <p>Host approval, waiting rooms, screen sharing, and mute controls.</p>
+          </Link>
+
+          <Link to="/videos/upload" className="quick-action-card">
+            <div className="quick-action-icon"><Upload size={20} /></div>
+            <h3>Upload Video</h3>
+            <p>Publish recorded content with automated AI title, description & chapters.</p>
+          </Link>
+
+          <Link to="/creator-dashboard" className="quick-action-card">
+            <div className="quick-action-icon"><Video size={20} /></div>
+            <h3>Creator Studio</h3>
+            <p>Monitor your active broadcasts, subscribers, and video library analytics.</p>
+          </Link>
         </div>
-        <SectionHeading
-          title="Continue watching"
-          action="Watch history"
-          to="/videos/history"
-        />
-        <EmptyPanel
-          compact
-          icon={<Clock3 size={20} />}
-          text="Pick up where you left off across your video library."
-          action="Open history"
-          to="/videos/history"
-        />
+
+        {error && <div className="form-error" style={{ marginBottom: "1.5rem" }}>{error}</div>}
+
+        {/* Live Now Strip */}
+        <section style={{ marginBottom: "2.5rem" }}>
+          <div className="section-heading">
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+              <span className="live-badge">LIVE NOW</span>
+              <h2>Featured Live Streams</h2>
+            </div>
+            <Link to="/live">Browse All Streams →</Link>
+          </div>
+
+          {streams.length > 0 ? (
+            <div className="live-strip">
+              {streams.map((stream) => (
+                <article className="video-card" key={stream._id}>
+                  <Link to={`/live/${stream._id}`}>
+                    <div className="video-thumb">
+                      {stream.thumbnailUrl ? (
+                        <img src={stream.thumbnailUrl} alt={stream.title} />
+                      ) : (
+                        <Radio size={36} />
+                      )}
+                      <span className="live-badge" style={{ position: "absolute", bottom: "0.5rem", left: "0.5rem" }}>
+                        LIVE
+                      </span>
+                    </div>
+                    <h3>{stream.title}</h3>
+                  </Link>
+                  <p>{stream.owner?.name || "Creator"} · {stream.category || "General"}</p>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-state-icon"><Radio size={24} /></div>
+              <h3>No Active Live Streams</h3>
+              <p>Be the first to go live and share your stream with the community.</p>
+              <Link to="/live/create" className="button primary" style={{ marginTop: "0.5rem" }}>
+                <Radio size={16} /> Go Live Now
+              </Link>
+            </div>
+          )}
+        </section>
+
+        {/* Recommended Videos */}
+        <section>
+          <div className="section-heading">
+            <h2>Recommended Videos</h2>
+            <Link to="/explore">View More Videos →</Link>
+          </div>
+
+          {videos.length > 0 ? (
+            <div className="video-grid">
+              {videos.map((video) => (
+                <article className="video-card" key={video._id}>
+                  <Link to={`/videos/${video._id}`}>
+                    <div className="video-thumb">
+                      {video.thumbnailUrl ? (
+                        <img src={video.thumbnailUrl} alt={video.title} />
+                      ) : (
+                        <Video size={36} />
+                      )}
+                    </div>
+                    <h3>{video.title}</h3>
+                  </Link>
+                  <p>{video.owner?.name || "Creator"} · {video.views || 0} views</p>
+                  <small>{video.category || "General"}</small>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-state-icon"><Video size={24} /></div>
+              <h3>No Videos Uploaded Yet</h3>
+              <p>Upload a video to build your channel and share content with viewers.</p>
+              <Link to="/videos/upload" className="button primary" style={{ marginTop: "0.5rem" }}>
+                <Upload size={16} /> Upload Video
+              </Link>
+            </div>
+          )}
+        </section>
       </div>
     </Shell>
   );
 }
-function SectionHeading({ title, action, to }) {
-  return (
-    <div className="section-heading">
-      <h2>{title}</h2>
-      <Link to={to}>
-        {action} <ArrowRight size={14} />
-      </Link>
-    </div>
-  );
-}
-function VideoGrid({ videos, compact = false }) {
-  if (!videos.length)
-    return (
-      <EmptyPanel
-        compact={compact}
-        icon={<Video size={20} />}
-        text="No videos here yet."
-        action="Explore videos"
-        to="/explore"
-      />
-    );
-  return (
-    <div className={`home-video-grid${compact ? " compact" : ""}`}>
-      {videos.map((video) => (
-        <Link
-          className="home-video-card"
-          to={`/videos/${video._id}`}
-          key={video._id}
-        >
-          <div className="home-thumb">
-            {video.thumbnailUrl ? (
-              <img src={video.thumbnailUrl} alt="" />
-            ) : (
-              <Video size={25} />
-            )}
-          </div>
-          <strong>{video.title}</strong>
-          <small>
-            {video.owner?.name || "Creator"} · {video.views || 0} views
-          </small>
-        </Link>
-      ))}
-    </div>
-  );
-}
-function EmptyPanel({ icon, text, action, to, compact = false }) {
-  return (
-    <div className={`empty-panel${compact ? " compact" : ""}`}>
-      <span className="empty-icon">{icon}</span>
-      <div>
-        <p>{text}</p>
-        <Link className="button ghost" to={to}>
-          {action}
-        </Link>
-      </div>
-    </div>
-  );
-}
-function AuthPage({ mode }) {
+
+function AuthForm({ mode = "login" }) {
   const isRegister = mode === "register";
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    name: "",
-    username: "",
-    email: "",
-    password: "",
-  });
+  const [form, setForm] = useState({ name: "", username: "", email: "", password: "" });
   const [status, setStatus] = useState({ loading: false, error: "" });
-  const update = (event) =>
+
+  function update(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
+  }
+
   async function submit(event) {
     event.preventDefault();
     setStatus({ loading: true, error: "" });
     try {
-      const { data } = await api.post(`/auth/${mode}`, form);
-      if (data?.token) setStoredToken(data.token);
-      navigate("/dashboard");
-    } catch (error) {
+      const endpoint = isRegister ? "/auth/register" : "/auth/login";
+      const payload = isRegister ? form : { email: form.email, password: form.password };
+      const { data } = await api.post(endpoint, payload);
+      if (data.token) setStoredToken(data.token);
+      navigate("/");
+    } catch (requestError) {
       setStatus({
         loading: false,
-        error: getApiError(error, "Unable to complete request"),
+        error: getApiError(requestError, isRegister ? "Registration failed" : "Sign in failed"),
       });
     }
   }
+
   return (
     <Shell>
       <div className="auth-card">
-        <div className="eyebrow">SECURE ACCOUNT</div>
-        <h2>{isRegister ? "Create your account" : "Welcome back"}</h2>
-        <p>
-          {isRegister
-            ? "Join StreamConnect and start sharing."
-            : "Sign in to continue to your workspace."}
+        <div className="brand-mark" style={{ margin: "0 auto 1.25rem" }}>
+          <Radio size={20} />
+        </div>
+        <h2 style={{ textAlign: "center" }}>{isRegister ? "Join StreamConnect" : "Welcome Back"}</h2>
+        <p style={{ textAlign: "center", color: "var(--text-secondary)" }}>
+          {isRegister ? "Create an account to stream, meet, and upload." : "Sign in to access your studio and meetings."}
         </p>
-        <form onSubmit={submit}>
+
+        <form className="meeting-form" onSubmit={submit}>
           {isRegister && (
             <>
               <label>
-                Name
-                <input
-                  name="name"
-                  value={form.name}
-                  onChange={update}
-                  required
-                  minLength="2"
-                />
+                Full Name
+                <input name="name" value={form.name} onChange={update} required placeholder="Jane Doe" />
               </label>
               <label>
                 Username
-                <input
-                  name="username"
-                  value={form.username}
-                  onChange={update}
-                  required
-                  pattern="[a-z0-9_]{3,30}"
-                />
+                <input name="username" value={form.username} onChange={update} required pattern="[a-z0-9_]{3,30}" placeholder="janedoe" />
               </label>
             </>
           )}
           <label>
-            Email
-            <input
-              type="email"
-              name="email"
-              value={form.email}
-              onChange={update}
-              required
-            />
+            Email Address
+            <input type="email" name="email" value={form.email} onChange={update} required placeholder="you@example.com" />
           </label>
           <label>
             Password
-            <input
-              type="password"
-              name="password"
-              value={form.password}
-              onChange={update}
-              required
-              minLength="8"
-            />
+            <input type="password" name="password" value={form.password} onChange={update} required minLength={8} placeholder="••••••••" />
           </label>
-          {status.error && (
-            <div className="form-error" role="alert">
-              {status.error}
-            </div>
-          )}
-          <button
-            className="button primary submit-button"
-            disabled={status.loading}
-          >
-            {isRegister ? "Create account" : "Sign in"}
+
+          {status.error && <div className="form-error">{status.error}</div>}
+
+          <button className="button primary" disabled={status.loading} style={{ width: "100%", marginTop: "0.5rem" }}>
+            {status.loading ? "Processing..." : isRegister ? "Create Account" : "Sign In"}
           </button>
         </form>
-        <p className="auth-switch">
+
+        <p style={{ textAlign: "center", fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "1.5rem" }}>
           {isRegister ? "Already have an account?" : "New to StreamConnect?"}{" "}
-          <Link to={isRegister ? "/login" : "/register"}>
+          <Link to={isRegister ? "/login" : "/register"} style={{ color: "var(--accent-secondary)", fontWeight: "700" }}>
             {isRegister ? "Sign in" : "Create one"}
           </Link>
         </p>
@@ -573,33 +572,27 @@ function AuthPage({ mode }) {
     </Shell>
   );
 }
+
 function Placeholder({ title }) {
   return (
     <Shell>
-      <div className="placeholder">
-        <div className="feature-icon">
-          <Video />
-        </div>
-        <h1>{title}</h1>
-        <p>This workspace is wired for the next implementation phase.</p>
+      <div className="empty-state" style={{ margin: "4rem auto", maxWidth: "480px" }}>
+        <div className="empty-state-icon"><Video size={28} /></div>
+        <h2>{title}</h2>
+        <p>This workspace feature is configured and ready for implementation.</p>
+        <Link to="/" className="button secondary">Return to Home</Link>
       </div>
     </Shell>
   );
 }
+
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
-      <Route path="/login" element={<AuthPage mode="login" />} />
-      <Route path="/register" element={<AuthPage mode="register" />} />
-      <Route
-        path="/profile"
-        element={
-          <Shell>
-            <ProfileSettings />
-          </Shell>
-        }
-      />
+      <Route path="/login" element={<AuthForm mode="login" />} />
+      <Route path="/register" element={<AuthForm mode="register" />} />
+      <Route path="/profile" element={<Shell><ProfileSettings /></Shell>} />
       <Route path="/explore" element={<VideoExplore />} />
       <Route path="/videos/upload" element={<VideoUpload />} />
       <Route path="/videos/manage" element={<VideoManagement />} />
@@ -618,8 +611,22 @@ export default function App() {
           </Shell>
         }
       />
-      <Route path="/live/:id/studio" element={<StreamStudio />} />
-      <Route path="/live/:id" element={<StreamViewer />} />
+      <Route
+        path="/live/:id/studio"
+        element={
+          <Shell>
+            <StreamStudio />
+          </Shell>
+        }
+      />
+      <Route
+        path="/live/:id"
+        element={
+          <Shell>
+            <StreamViewer />
+          </Shell>
+        }
+      />
       <Route path="/creator-dashboard" element={<CreatorDashboard />} />
       <Route path="/admin" element={<AdminDashboard />} />
       <Route

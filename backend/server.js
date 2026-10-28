@@ -17,6 +17,7 @@ import streamRoutes from './routes/stream.routes.js';
 import userRoutes from './routes/user.routes.js';
 import videoRoutes from './routes/video.routes.js';
 import youtubeRoutes from './routes/youtube.routes.js';
+import aiRoutes from './routes/ai.routes.js';
 import { installStreamSockets } from './sockets/stream.socket.js';
 import { notFound, errorHandler } from './middleware/errorHandler.js';
 
@@ -91,6 +92,7 @@ export function createApp() {
   app.use('/api/streams', streamRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/videos', videoRoutes);
+  app.use('/api/ai', aiRoutes);
   app.use('/api/youtube', youtubeRoutes);
   app.use(notFound);
   app.use(errorHandler);

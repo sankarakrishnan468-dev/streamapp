@@ -5,211 +5,291 @@ import Meeting from '../models/Meeting.js';
 import User from '../models/User.js';
 import { env } from '../config/env.js';
 
-const activeRooms = new Map();
-const pendingRequests = new Map();
-const userSockets = new Map();
+const activeRooms = new Map(); // roomId -> Map(socketId -> participantData)
+const pendingRequests = new Map(); // roomId -> Map(userId -> requestData)
 
-function cookieValue(header, name) {
-  return header?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
+function parseCookie(header, name) {
+  return header
+    ?.split(';')
+    .map((p) => p.trim())
+    .find((p) => p.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
 }
 
 export function installSocketAuth(io) {
   io.use(async (socket, next) => {
     try {
       const authHeader = socket.handshake.headers.authorization;
-      const bearer = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+      const bearer = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
       const handshakeToken = socket.handshake.auth?.token;
-      const cookieToken = cookieValue(socket.handshake.headers.cookie, env.cookieName);
+      const cookieToken = parseCookie(socket.handshake.headers.cookie, env.cookieName);
       const token = handshakeToken || bearer || cookieToken;
-      if (!token) { socket.user = null; return next(); }
+
+      if (!token) {
+        socket.user = null;
+        return next();
+      }
+
       const payload = jwt.verify(token, env.jwtSecret);
       const user = await User.findById(payload.sub);
-      if (!user || user.status !== 'active') return next(new Error('Inactive account'));
+      if (!user || user.status !== 'active') {
+        return next(new Error('Inactive or invalid account'));
+      }
       socket.user = user;
       next();
-    } catch { socket.user = null; next(); }
+    } catch {
+      socket.user = null;
+      next();
+    }
   });
 }
 
 export function installMeetingSockets(io) {
   io.on('connection', (socket) => {
     if (socket.user) {
-      const sockets = userSockets.get(socket.user._id.toString()) || new Set();
-      sockets.add(socket.id); userSockets.set(socket.user._id.toString(), sockets); socket.join(`user:${socket.user._id}`);
+      socket.join(`user:${socket.user._id}`);
     }
-    socket.on('meeting:join', async ({ roomId, guestId, sessionId, accessCode }) => {
-      const meetingQuery = mongoose.isValidObjectId(roomId) ? { status: 'active', $or: [{ roomId }, { _id: roomId }] } : { roomId, status: 'active' };
-      const meeting = await Meeting.findOne(meetingQuery);
-      if (!meeting) return socket.emit('meeting:error', { error: 'Meeting not found or ended' });
-      if (meeting.expiresAt && meeting.expiresAt <= new Date()) return socket.emit('meeting:error', { error: 'This private call has expired' });
-      if (!socket.user) return socket.emit('meeting:error', { error: 'Sign in before joining this private meeting' });
-      if (meeting.accessCodeHash && !(await bcrypt.compare(String(accessCode || ''), meeting.accessCodeHash))) return socket.emit('meeting:error', { error: 'The meeting password is incorrect' });
-      const isGuest = !socket.user;
-      const isHost = Boolean(socket.user && meeting.host.toString() === socket.user._id.toString());
-      const isInvitedUser = Boolean(
-        socket.user && meeting.invitedUsers?.some((id) => id.toString() === socket.user._id.toString())
-      );
-      const isInvitedViewer = Boolean(socket.user && meeting.invitedViewer?.toString() === socket.user._id.toString());
-      const isInvited = isInvitedUser || isInvitedViewer;
-      const hasInviteList =
-        (meeting.invitedUsers && meeting.invitedUsers.length > 0) ||
-        Boolean(meeting.invitedViewer);
-      const isApproved = meeting.approvedUsers?.some((entry) => entry.user?.toString() === socket.user._id.toString());
-      const needsApproval = !isHost && meeting.waitingRoom && !isApproved;
 
-      if (hasInviteList && !isHost && !isInvited && !isApproved && !meeting.waitingRoom) {
-        return socket.emit('meeting:error', { error: 'You are not invited to this private call' });
-      }
-      const room = activeRooms.get(roomId) || new Map();
-      const requestKey = socket.user ? `user:${socket.user._id}` : `guest:${String(guestId || socket.id).slice(0, 100)}`;
-      const requests = pendingRequests.get(roomId) || new Map();
-      if (meeting.locked && !isHost) return socket.emit('meeting:error', { error: 'This meeting is locked' });
-      for (const [socketId, participant] of room) {
-        if ((socket.user && participant.userId === socket.user._id.toString()) || participant.requestKey === requestKey) {
-          if (socketId === socket.id) continue;
-          room.delete(socketId);
-          io.sockets.sockets.get(socketId)?.disconnect(true);
+    // --- JOIN FLOW ---
+    socket.on('meeting:join', async ({ roomId, accessCode }) => {
+      try {
+        if (!socket.user) {
+          return socket.emit('meeting:error', { error: 'Please sign in to join this meeting' });
         }
-      }
-      const admittedCount = [...room.values()].filter((item) => item.approved).length;
-      if (!room.has(socket.id) && !isApproved && admittedCount >= meeting.maxParticipants) return socket.emit('meeting:error', { error: `This meeting is full (maximum ${meeting.maxParticipants || 5} participants)` });
-      const participant = { socketId: socket.id, sessionId: String(sessionId || ''), requestKey, userId: socket.user?._id.toString() || null, name: socket.user ? (socket.user.username ? `${socket.user.name} (@${socket.user.username})` : socket.user.name) : 'Guest viewer', username: socket.user?.username, isHost, approved: !needsApproval };
-      room.set(socket.id, participant); activeRooms.set(roomId, room); socket.join(`meeting:${roomId}`); socket.data.roomId = roomId;
-      socket.data.sessionId = participant.sessionId;
-      if (needsApproval) {
-        const request = requests.get(requestKey) || { requestKey, name: participant.name, socketId: socket.id, notified: false };
-        request.socketId = socket.id; request.name = participant.name; requests.set(requestKey, request); pendingRequests.set(roomId, requests);
-        await Meeting.updateOne({ _id: meeting._id }, { $pull: { pendingJoinRequests: { user: socket.user._id } }, $push: { pendingJoinRequests: { user: socket.user._id, displayName: participant.name, requestedAt: new Date() } } });
-        socket.data.approved = false; socket.emit('meeting:waiting', { message: 'Waiting for the owner to approve your private call request...' });
-        io.to(`meeting:${roomId}`).emit('meeting:guest-request', { socketId: socket.id, requestKey, name: participant.name, reconnected: request.notified }); request.notified = true;
-      } else {
-        socket.data.approved = true; socket.emit('meeting:participants', { participants: [...room.values()].filter((item) => item.socketId !== socket.id && item.approved) });
-        socket.to(`meeting:${roomId}`).emit('meeting:participant-joined', participant);
-        io.to(`meeting:${roomId}`).emit('meeting:notification', { message: `${socket.user?.name || participant.name} joined the meeting` });
-        for (const request of requests.values()) { request.notified = true; socket.emit('meeting:guest-request', { socketId: request.socketId, requestKey: request.requestKey, name: request.name }); }
-        if (isHost) {
-          const persisted = await Meeting.findById(meeting._id).select('pendingJoinRequests').lean();
-          for (const request of persisted?.pendingJoinRequests || []) {
-            const active = [...room.values()].find((item) => item.userId === request.user?.toString());
-            if (!active) continue;
-            const restored = { requestKey: `user:${request.user}`, socketId: active.socketId, name: request.displayName || active.name };
-            requests.set(restored.requestKey, restored);
-            socket.emit('meeting:guest-request', restored);
+
+        const meetingQuery = mongoose.isValidObjectId(roomId)
+          ? { $or: [{ roomId }, { _id: roomId }] }
+          : { roomId };
+
+        const meeting = await Meeting.findOne(meetingQuery).select('+accessCodeHash');
+        if (!meeting || meeting.status === 'ended') {
+          return socket.emit('meeting:error', { error: 'Meeting not found or already ended' });
+        }
+
+        if (meeting.expiresAt && meeting.expiresAt <= new Date()) {
+          return socket.emit('meeting:error', { error: 'This meeting link has expired' });
+        }
+
+        if (meeting.accessCodeHash) {
+          const match = await bcrypt.compare(String(accessCode || ''), meeting.accessCodeHash);
+          if (!match) {
+            return socket.emit('meeting:error', { error: 'Incorrect meeting access code' });
           }
-          pendingRequests.set(roomId, requests);
         }
+
+        const currentUserId = socket.user._id.toString();
+        const isHost = meeting.host.toString() === currentUserId;
+        const isApproved = meeting.approvedUsers?.some(
+          (u) => u.user?.toString() === currentUserId
+        );
+        const isInvited = meeting.invitedUsers?.some(
+          (id) => id.toString() === currentUserId
+        );
+
+        if (meeting.invitedUsers?.length > 0 && !isHost && !isInvited && !isApproved && !meeting.waitingRoom) {
+          return socket.emit('meeting:error', { error: 'You are not invited to this private meeting' });
+        }
+
+        const room = activeRooms.get(meeting.roomId) || new Map();
+        const admittedCount = [...room.values()].filter((p) => p.isApproved).length;
+
+        if (!isApproved && admittedCount >= meeting.maxParticipants) {
+          return socket.emit('meeting:error', {
+            error: `This meeting is at full capacity (maximum ${meeting.maxParticipants} participants)`,
+          });
+        }
+
+        const participantData = {
+          socketId: socket.id,
+          userId: currentUserId,
+          name: socket.user.name,
+          username: socket.user.username,
+          avatarUrl: socket.user.avatarUrl,
+          isHost,
+          isApproved: isHost || !meeting.waitingRoom || isApproved,
+        };
+
+        socket.data.roomId = meeting.roomId;
+        socket.data.userId = currentUserId;
+        socket.join(`meeting:${meeting.roomId}`);
+        room.set(socket.id, participantData);
+        activeRooms.set(meeting.roomId, room);
+
+        const requests = pendingRequests.get(meeting.roomId) || new Map();
+
+        if (!participantData.isApproved) {
+          requests.set(currentUserId, {
+            userId: currentUserId,
+            socketId: socket.id,
+            name: socket.user.name,
+            username: socket.user.username,
+            avatarUrl: socket.user.avatarUrl,
+            requestedAt: new Date(),
+          });
+          pendingRequests.set(meeting.roomId, requests);
+
+          socket.emit('meeting:waiting', {
+            message: 'Waiting for the host to let you into the meeting...',
+          });
+
+          io.to(`meeting:${meeting.roomId}`).emit('meeting:guest-request', {
+            userId: currentUserId,
+            socketId: socket.id,
+            name: socket.user.name,
+            username: socket.user.username,
+          });
+        } else {
+          socket.emit('meeting:ready', {
+            isHost,
+            participants: [...room.values()].filter((p) => p.isApproved),
+          });
+
+          socket.to(`meeting:${meeting.roomId}`).emit('meeting:participant-joined', participantData);
+
+          if (isHost) {
+            socket.emit('meeting:pending-list', {
+              requests: Array.from(requests.values()),
+            });
+          }
+        }
+      } catch (err) {
+        socket.emit('meeting:error', { error: 'Failed to join meeting' });
       }
     });
 
-    socket.on('meeting:guest-approve', async ({ targetSocketId, targetUserId, requestKey }) => {
+    // --- HOST APPROVAL CONTROLS ---
+    socket.on('meeting:host-approve', async ({ targetUserId }) => {
+      try {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+
+        const meeting = await Meeting.findOne({ roomId });
+        if (!meeting || meeting.host.toString() !== socket.user?._id?.toString()) return;
+
+        await Meeting.updateOne(
+          { _id: meeting._id, 'approvedUsers.user': { $ne: targetUserId } },
+          { $push: { approvedUsers: { user: targetUserId } } }
+        );
+
+        const requests = pendingRequests.get(roomId);
+        const reqData = requests?.get(targetUserId);
+        if (reqData) {
+          requests.delete(targetUserId);
+          const room = activeRooms.get(roomId);
+          const targetParticipant = room?.get(reqData.socketId);
+          if (targetParticipant) {
+            targetParticipant.isApproved = true;
+          }
+
+          io.to(reqData.socketId).emit('meeting:approved', {
+            message: 'Host approved your request. Joining now...',
+          });
+          io.to(`meeting:${roomId}`).emit('meeting:participant-approved', {
+            userId: targetUserId,
+            name: reqData.name,
+          });
+        }
+      } catch {}
+    });
+
+    socket.on('meeting:host-reject', async ({ targetUserId }) => {
+      try {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+
+        const meeting = await Meeting.findOne({ roomId });
+        if (!meeting || meeting.host.toString() !== socket.user?._id?.toString()) return;
+
+        const requests = pendingRequests.get(roomId);
+        const reqData = requests?.get(targetUserId);
+        if (reqData) {
+          requests.delete(targetUserId);
+          io.to(reqData.socketId).emit('meeting:rejected', {
+            message: 'The host has declined your request to join.',
+          });
+        }
+      } catch {}
+    });
+
+    // --- MODERATION CONTROLS ---
+    socket.on('meeting:mute-participant', ({ targetUserId }) => {
       const roomId = socket.data.roomId;
-      const room = roomId && activeRooms.get(roomId);
-      let target = targetSocketId ? room?.get(targetSocketId) : null;
-      let actualSocketId = targetSocketId;
-      if (!target && room) {
-        for (const [sId, p] of room) {
-          if ((targetUserId && p.userId === String(targetUserId)) || (requestKey && p.requestKey === requestKey)) {
-            target = p;
-            actualSocketId = sId;
+      if (!roomId) return;
+      io.to(`meeting:${roomId}`).emit('meeting:request-mute', { targetUserId });
+    });
+
+    socket.on('meeting:remove-participant', async ({ targetUserId }) => {
+      const roomId = socket.data.roomId;
+      if (!roomId) return;
+
+      const meeting = await Meeting.findOne({ roomId });
+      if (!meeting || meeting.host.toString() !== socket.user?._id?.toString()) return;
+
+      const room = activeRooms.get(roomId);
+      if (room) {
+        for (const [sId, p] of room.entries()) {
+          if (p.userId === targetUserId) {
+            io.to(sId).emit('meeting:removed', {
+              message: 'You have been removed from the meeting by the host.',
+            });
+            room.delete(sId);
             break;
           }
         }
       }
-      if (!room || !target || !socket.user || (room.get(socket.id)?.isHost !== true) || target.approved) return;
-      const meeting = await Meeting.findOne({ roomId, status: 'active' });
-      const admittedCount = [...room.values()].filter((item) => item.approved).length;
-      if (!meeting || admittedCount >= meeting.maxParticipants) return socket.emit('meeting:notification', { message: `This call is full (maximum ${meeting?.maxParticipants || 5} participants).` });
-      target.approved = true;
-      room.set(actualSocketId, target);
-      const targetSocket = io.sockets.sockets.get(actualSocketId);
-      pendingRequests.get(roomId)?.delete(target.requestKey);
-      await Meeting.updateOne({ roomId, status: 'active' }, { $pull: { pendingJoinRequests: { user: target.userId } }, $addToSet: { approvedUsers: { user: target.userId } } });
-      if (targetSocket) {
-        targetSocket.data.approved = true;
-        targetSocket.emit('meeting:approved');
-        targetSocket.emit('meeting:participants', { participants: [...room.values()].filter((item) => item.socketId !== actualSocketId && item.approved) });
-        targetSocket.broadcast.to(`meeting:${roomId}`).emit('meeting:participant-joined', target);
-      }
-      io.to(`meeting:${roomId}`).emit('meeting:notification', { message: `${target.name} joined the meeting` });
+      io.to(`meeting:${roomId}`).emit('meeting:participant-left', { userId: targetUserId });
     });
 
-    socket.on('meeting:guest-reject', ({ targetSocketId, targetUserId, requestKey }) => {
-      const roomId = socket.data.roomId;
-      const room = roomId && activeRooms.get(roomId);
-      let target = targetSocketId ? room?.get(targetSocketId) : null;
-      let actualSocketId = targetSocketId;
-      if (!target && room) {
-        for (const [sId, p] of room) {
-          if ((targetUserId && p.userId === String(targetUserId)) || (requestKey && p.requestKey === requestKey)) {
-            target = p;
-            actualSocketId = sId;
-            break;
-          }
-        }
-      }
-      if (!room || !target || !socket.user || room.get(socket.id)?.isHost !== true || target.approved) return;
-      room.delete(actualSocketId);
-      pendingRequests.get(roomId)?.delete(target.requestKey);
-      io.sockets.sockets.get(actualSocketId)?.emit('meeting:rejected', { message: 'The host declined your request to join.' });
-      io.sockets.sockets.get(actualSocketId)?.disconnect(true);
-      Meeting.updateOne({ roomId }, { $pull: { pendingJoinRequests: { user: target.userId } } }).catch(() => {});
-    });
-
-    socket.on('meeting:signal', ({ targetSocketId, signal }) => {
-      if (!socket.data.roomId || !socket.data.approved || !targetSocketId || !signal) return;
-      const room = activeRooms.get(socket.data.roomId);
-      if (!room?.has(targetSocketId)) return;
-      io.to(targetSocketId).emit('meeting:signal', { fromSocketId: socket.id, signal });
-    });
-
+    // --- CHAT & REACTIONS ---
     socket.on('meeting:chat', ({ message }) => {
-      if (!socket.data.roomId || !socket.data.approved || typeof message !== 'string' || !message.trim() || message.length > 500) return;
-      io.to(`meeting:${socket.data.roomId}`).emit('meeting:chat', { id: `${socket.id}-${Date.now()}`, message: message.trim(), sender: socket.user?.name || 'Guest viewer', createdAt: new Date().toISOString() });
+      const roomId = socket.data.roomId;
+      if (!roomId || !message?.trim()) return;
+
+      io.to(`meeting:${roomId}`).emit('meeting:chat', {
+        id: `${Date.now()}-${socket.user?._id}`,
+        sender: socket.user?.name || 'Participant',
+        userId: socket.user?._id,
+        message: message.trim(),
+        createdAt: new Date().toISOString(),
+      });
     });
 
     socket.on('meeting:reaction', ({ emoji }) => {
-      const allowed = ['👍', '👏', '❤️', '😂', '🎉', '😮', '🔥'];
-      if (!socket.data.roomId || !socket.data.approved || !allowed.includes(emoji)) return;
-      io.to(`meeting:${socket.data.roomId}`).emit('meeting:reaction', { emoji, sender: socket.user?.name || 'Guest viewer', createdAt: new Date().toISOString() });
-    });
-
-    socket.on('meeting:kick', async ({ targetSocketId }) => {
       const roomId = socket.data.roomId;
-      const room = activeRooms.get(roomId);
-      const meeting = roomId ? await Meeting.findOne({ roomId }) : null;
-      const target = room?.get(targetSocketId) || [...(room?.values() || [])].find((item) => item.userId === String(targetSocketId) || item.sessionId === String(targetSocketId));
-      const targetId = target?.socketId;
-      if (!targetId || !meeting || !socket.user || meeting.host.toString() !== socket.user._id.toString()) return;
-      io.to(targetId).emit('meeting:removed', { message: 'You were removed by the host' });
-      io.sockets.sockets.get(targetId)?.disconnect(true);
+      if (!roomId || !emoji) return;
+
+      io.to(`meeting:${roomId}`).emit('meeting:reaction', {
+        sender: socket.user?.name || 'Participant',
+        emoji,
+        createdAt: Date.now(),
+      });
     });
 
-    socket.on('meeting:mute', async ({ targetSocketId }) => {
-      const roomId = socket.data.roomId;
-      const room = roomId && activeRooms.get(roomId);
-      const meeting = roomId ? await Meeting.findOne({ roomId }) : null;
-      const target = room?.get(targetSocketId) || [...(room?.values() || [])].find((item) => item.userId === String(targetSocketId) || item.sessionId === String(targetSocketId));
-      const targetId = target?.socketId;
-      if (!targetId || !meeting || !socket.user || meeting.host.toString() !== socket.user._id.toString()) return;
-      io.to(targetId).emit('meeting:force-muted', { message: 'The host muted your microphone' });
-      io.to(`meeting:${roomId}`).emit('meeting:notification', { message: `${socket.user.name} muted a participant` });
-    });
-
-    socket.on('meeting:lock', async ({ locked }) => {
-      const roomId = socket.data.roomId; const meeting = roomId ? await Meeting.findOne({ roomId }) : null;
-      if (!meeting || !socket.user || meeting.host.toString() !== socket.user._id.toString()) return;
-      meeting.locked = Boolean(locked); await meeting.save();
-      io.to(`meeting:${roomId}`).emit('meeting:lock-changed', { locked: meeting.locked });
-    });
-
+    // --- DISCONNECT ---
     socket.on('disconnect', () => {
-      if (socket.user) {
-        const sockets = userSockets.get(socket.user._id.toString()); sockets?.delete(socket.id);
-        if (sockets?.size) userSockets.set(socket.user._id.toString(), sockets); else userSockets.delete(socket.user._id.toString());
+      const roomId = socket.data.roomId;
+      if (!roomId) return;
+
+      const room = activeRooms.get(roomId);
+      if (room) {
+        const participant = room.get(socket.id);
+        room.delete(socket.id);
+        if (room.size === 0) {
+          activeRooms.delete(roomId);
+        }
+
+        if (participant) {
+          socket.to(`meeting:${roomId}`).emit('meeting:participant-left', {
+            userId: participant.userId,
+            name: participant.name,
+          });
+        }
       }
-      const roomId = socket.data.roomId; const room = roomId && activeRooms.get(roomId); if (!room) return;
-      const participant = room.get(socket.id); room.delete(socket.id); if (!participant?.approved) { if (room.size) io.to(`meeting:${roomId}`).emit('meeting:guest-disconnected', { socketId: socket.id }); } else if (!room.size) activeRooms.delete(roomId); else io.to(`meeting:${roomId}`).emit('meeting:participant-left', { socketId: socket.id, name: participant?.name });
-      if (participant?.sessionId) Meeting.updateOne({ roomId }, { $pull: { activeParticipants: { sessionId: participant.sessionId } } }).catch(() => {});
+
+      if (socket.user) {
+        const requests = pendingRequests.get(roomId);
+        requests?.delete(socket.user._id.toString());
+      }
     });
   });
 }

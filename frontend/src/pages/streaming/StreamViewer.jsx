@@ -1,20 +1,58 @@
 import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
-import { Expand, LoaderCircle, Pause, Play, RefreshCw, Send, Share2, ThumbsDown, ThumbsUp, Users, Volume2, VolumeX } from 'lucide-react';
+import {
+  AlertCircle,
+  Copy,
+  Expand,
+  Flag,
+  Heart,
+  LoaderCircle,
+  MessageSquare,
+  Pause,
+  Play,
+  Radio,
+  RefreshCw,
+  Send,
+  Share2,
+  ThumbsDown,
+  ThumbsUp,
+  User,
+  Users,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
 import { io } from 'socket.io-client';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { api, getApiError, getSocketOptions, rtcConfiguration, socketUrl } from '../../services/api.js';
 import ShareModal from '../../components/ShareModal.jsx';
 
 export default function StreamViewer() {
-  const { id } = useParams(); const video = useRef(null); const socket = useRef(null); const hls = useRef(null); const peer = useRef(null); const pendingIce = useRef([]); const [connection, setConnection] = useState('connecting');
-  const [stream, setStream] = useState(null); const [count, setCount] = useState(0); const [messages, setMessages] = useState([]); const [message, setMessage] = useState('');
-  const [error, setError] = useState(''); const [playing, setPlaying] = useState(false); const [muted, setMuted] = useState(true); const [volume, setVolume] = useState(1); const [buffering, setBuffering] = useState(true);
-  const [reactions, setReactions] = useState({ likes: 0, dislikes: 0 }); const [myReaction, setMyReaction] = useState(null); const [showShare, setShowShare] = useState(false); const [shared, setShared] = useState(false);
+  const { id } = useParams();
+  const video = useRef(null);
+  const socket = useRef(null);
+  const hls = useRef(null);
+  const peer = useRef(null);
+  const pendingIce = useRef([]);
+
+  const [connection, setConnection] = useState('connecting');
+  const [stream, setStream] = useState(null);
+  const [count, setCount] = useState(0);
+  const [messages, setMessages] = useState([]);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [volume, setVolume] = useState(1);
+  const [buffering, setBuffering] = useState(true);
+  const [reactions, setReactions] = useState({ likes: 0, dislikes: 0 });
+  const [myReaction, setMyReaction] = useState(null);
+  const [showShare, setShowShare] = useState(false);
+  const [chatReported, setChatReported] = useState(false);
 
   useEffect(() => {
     let client;
     let disposed = false;
+
     async function load() {
       try {
         const { data } = await api.get(`/streams/${id}`);
@@ -25,25 +63,22 @@ export default function StreamViewer() {
         socket.current = client;
 
         client.on('connect', () => {
-          console.log('[StreamViewer Socket] Connected:', client.id);
           setConnection('connected');
           client.emit('stream:join', { streamId: id, mode: 'viewer' });
         });
 
-        client.on('disconnect', (reason) => {
-          console.warn('[StreamViewer Socket] Disconnected:', reason);
+        client.on('disconnect', () => {
           setConnection('offline');
         });
 
-        client.on('connect_error', (err) => {
-          console.error('[StreamViewer Socket] Connect error:', err.message);
+        client.on('connect_error', () => {
           setConnection('offline');
-          setError('Viewer connection is offline. Check that the backend is running.');
+          setError('Chat and live status offline. Check backend server.');
         });
 
         client.on('stream:viewer-count', ({ count: next }) => setCount(next));
         client.on('stream:chat', (item) => {
-          setMessages((items) => items.some((m) => m.id === item.id) ? items : [...items, item]);
+          setMessages((items) => (items.some((m) => m.id === item.id) ? items : [...items, item]));
         });
         client.on('stream:reactions', (next) => setReactions(next));
         client.on('stream:error', (item) => setError(item.error));
@@ -54,7 +89,7 @@ export default function StreamViewer() {
           peer.current = connectionPeer;
 
           connectionPeer.ontrack = (event) => {
-            const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : null;
+            const remoteStream = event.streams && event.streams[0] ? event.streams[0] : null;
             if (video.current) {
               if (remoteStream) {
                 video.current.srcObject = remoteStream;
@@ -68,13 +103,13 @@ export default function StreamViewer() {
               }
               hls.current?.destroy();
               setBuffering(false);
-              video.current.play().catch(() => setError('Video is ready. Press Play or unmute to start playback.'));
+              video.current.play().catch(() => {});
             }
           };
 
           connectionPeer.onconnectionstatechange = () => {
             if (['failed', 'disconnected'].includes(connectionPeer.connectionState)) {
-              setError('Live connection was lost. Press reconnect to try again.');
+              setError('Live video stream disconnected. Click reconnect to resume.');
             }
           };
 
@@ -92,265 +127,366 @@ export default function StreamViewer() {
             await connectionPeer.setLocalDescription(answer);
             client.emit('stream:webrtc-answer', { targetSocketId: streamerId, description: connectionPeer.localDescription });
           } catch {
-            setError('Unable to negotiate the live video connection.');
+            setError('Unable to negotiate real-time media connection.');
           }
         });
 
         client.on('stream:webrtc-ice', async ({ candidate }) => {
           if (!peer.current?.remoteDescription) {
             pendingIce.current.push(candidate);
-            return;
+          } else {
+            await peer.current.addIceCandidate(candidate).catch(() => {});
           }
-          await peer.current.addIceCandidate(candidate).catch(() => {});
         });
-
-        client.on('stream:status', ({ status }) => {
-          setStream((current) => current ? { ...current, status } : current);
-          if (status === 'paused') setError('The streamer has paused this broadcast.');
-          else setError('');
-        });
-
-        client.on('stream:ended', () => {
-          setStream((current) => current ? { ...current, status: 'ended' } : current);
-          setError('This broadcast has ended.');
-          peer.current?.close();
-        });
-
-        if (data.stream.playbackUrl) attachPlayback(data.stream.playbackUrl);
-      } catch (requestError) {
-        if (!disposed) setError(getApiError(requestError, 'Unable to load stream.'));
+      } catch (e) {
+        setError(getApiError(e, 'Unable to load stream details'));
       }
     }
+
     load();
+
     return () => {
       disposed = true;
-      hls.current?.destroy();
       peer.current?.close();
-      client?.emit('stream:leave');
-      client?.disconnect();
+      socket.current?.disconnect();
+      hls.current?.destroy();
     };
   }, [id]);
-
-  function attachPlayback(url) {
-    const element = video.current;
-    if (!element) return;
-    setBuffering(true);
-    setError('');
-    if (element.canPlayType('application/vnd.apple.mpegurl')) {
-      element.src = url;
-    } else if (Hls.isSupported()) {
-      hls.current?.destroy();
-      const instance = new Hls({ enableWorker: true, lowLatencyMode: true });
-      hls.current = instance;
-      instance.loadSource(url);
-      instance.attachMedia(element);
-      instance.on(Hls.Events.MANIFEST_PARSED, () => {
-        element.play().catch(() => {});
-      });
-      instance.on(Hls.Events.ERROR, (_, info) => {
-        if (info.fatal) setError('Playback lost. Press reconnect to try again.');
-      });
-    } else {
-      setError('This browser cannot play HLS video.');
-    }
-  }
 
   function reconnect() {
     setError('');
     setBuffering(true);
-    if (stream?.playbackUrl) {
-      attachPlayback(stream.playbackUrl);
-    } else if (socket.current) {
-      peer.current?.close();
-      peer.current = null;
-      socket.current.emit('stream:join', { streamId: id, mode: 'viewer' });
-    }
+    socket.current?.emit('stream:join', { streamId: id, mode: 'viewer' });
   }
 
-  async function togglePlayback() {
-    const element = video.current;
-    if (!element) return;
-    if (element.paused) {
-      try {
-        await element.play();
-        setError('');
-      } catch {
-        element.muted = true;
-        setMuted(true);
-        try {
-          await element.play();
-          setError('');
-        } catch {
-          setError('Playback was blocked. Allow autoplay or press Play again.');
-        }
-      }
+  function sendChat(e) {
+    e.preventDefault();
+    if (!message.trim()) return;
+    socket.current?.emit('stream:chat', { message: message.trim() });
+    setMessage('');
+  }
+
+  function react(type) {
+    const next = myReaction === type ? null : type;
+    setMyReaction(next);
+    socket.current?.emit('stream:reaction', { reaction: next });
+  }
+
+  function togglePlay() {
+    if (!video.current) return;
+    if (video.current.paused) {
+      video.current.play();
+      setPlaying(true);
     } else {
-      element.pause();
+      video.current.pause();
+      setPlaying(false);
     }
   }
 
   function toggleMute() {
+    if (!video.current) return;
     const next = !muted;
-    if (video.current) video.current.muted = next;
+    video.current.muted = next;
     setMuted(next);
   }
 
-  function changeVolume(event) {
-    const next = Number(event.target.value);
+  function handleVolume(e) {
+    const val = parseFloat(e.target.value);
+    setVolume(val);
     if (video.current) {
-      video.current.volume = next;
-      video.current.muted = next === 0;
-    }
-    setVolume(next);
-    setMuted(next === 0);
-  }
-
-  function fullscreen() {
-    const element = video.current;
-    if (!element) return;
-    if (document.fullscreenElement) document.exitFullscreen();
-    else element.requestFullscreen?.();
-  }
-
-  function send(event) {
-    event.preventDefault();
-    if (connection !== 'connected') return setError('You are not connected to the live stream.');
-    if (message.trim()) {
-      socket.current?.emit('stream:chat', { message });
-      setMessage('');
+      video.current.volume = val;
+      video.current.muted = val === 0;
+      setMuted(val === 0);
     }
   }
 
-  function react(next) {
-    if (connection !== 'connected') return setError('You are not connected to the live stream.');
-    const value = myReaction === next ? null : next;
-    setMyReaction(value);
-    socket.current?.emit('stream:reaction', { reaction: value });
-  }
-
-  function share() {
-    setShowShare(true);
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(window.location.href).then(() => {
-        setShared(true);
-        setTimeout(() => setShared(false), 2500);
-      }).catch(() => {});
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      video.current?.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
     }
   }
 
-  const ended = stream?.status === 'ended';
   return (
-    <div className="meeting-room">
+    <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
       {showShare && (
         <ShareModal
           url={window.location.href}
-          title={stream?.title || 'Live stream'}
+          title={stream?.title || 'Live Stream'}
           onClose={() => setShowShare(false)}
         />
       )}
-      <header className="meeting-header">
+
+      {/* Main YouTube Live Style Layout */}
+      <div className="stream-view-layout">
+        {/* Left Column: Player & Streamer Metadata */}
         <div>
-          <strong>{stream?.title || 'Live stream'}</strong>
-          <small>
-            {stream?.owner?.name || 'Creator'} · {stream?.category || 'General'} · <Users size={14} /> {count} connected viewers
-          </small>
-        </div>
-        <span className="live-badge"><RadioIcon /> LIVE</span>
-      </header>
+          <div className="stream-player-container">
+            <video
+              ref={video}
+              autoPlay
+              playsInline
+              muted={muted}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+            />
 
-      {error && <div className="meeting-error">{error}</div>}
+            {/* Custom Interactive Player Overlays */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '1rem',
+                left: '1rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.6rem',
+                zIndex: 10,
+              }}
+            >
+              <span className="live-badge">
+                <Radio size={12} /> LIVE
+              </span>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.25rem 0.6rem',
+                  borderRadius: '9999px',
+                  backgroundColor: 'rgba(0,0,0,0.65)',
+                  backdropFilter: 'blur(8px)',
+                  fontSize: '0.75rem',
+                  color: '#ffffff',
+                }}
+              >
+                <Users size={13} /> {count} viewers
+              </span>
+            </div>
 
-      {ended ? (
-        <div className="placeholder">
-          <h1>Stream ended</h1>
-          <p>This broadcast has ended.</p>
-        </div>
-      ) : (
-        <section className="call-layout">
-          <div>
-            <div className="video-shell">
-              <video
-                className="stream-player"
-                autoPlay
-                muted={muted}
-                playsInline
-                poster={stream?.thumbnailUrl}
-                ref={video}
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
-                onWaiting={() => setBuffering(true)}
-                onPlaying={() => setBuffering(false)}
-              />
-              <div className="video-controls">
-                <button className="control" onClick={togglePlayback} aria-label={playing ? 'Pause live video' : 'Play live video'}>
-                  {playing ? <Pause /> : <Play />}
-                </button>
-                <button className="control" onClick={toggleMute} aria-label={muted ? 'Unmute video' : 'Mute video'}>
-                  {muted ? <VolumeX /> : <Volume2 />}
+            {/* Bottom Controls Bar */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                background: 'linear-gradient(transparent, rgba(0,0,0,0.85))',
+                padding: '2.5rem 1rem 0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                zIndex: 10,
+              }}
+            >
+              <button
+                onClick={togglePlay}
+                style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex' }}
+              >
+                {playing ? <Pause size={20} /> : <Play size={20} />}
+              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <button
+                  onClick={toggleMute}
+                  style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex' }}
+                >
+                  {muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                 </button>
                 <input
-                  aria-label="Volume"
-                  className="volume-slider"
                   type="range"
                   min="0"
                   max="1"
                   step="0.05"
                   value={muted ? 0 : volume}
-                  onChange={changeVolume}
+                  onChange={handleVolume}
+                  style={{ width: '80px', accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
                 />
-                <button className="control" onClick={fullscreen} aria-label="Fullscreen">
-                  <Expand />
+              </div>
+
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <button
+                  onClick={reconnect}
+                  title="Reconnect video stream"
+                  style={{ background: 'none', border: 'none', color: '#a1a1aa', cursor: 'pointer', display: 'flex' }}
+                >
+                  <RefreshCw size={18} />
                 </button>
-                {buffering && (
-                  <span className="buffering">
-                    <LoaderCircle size={16} /> Buffering…
-                  </span>
-                )}
-                <button className="control" onClick={reconnect} aria-label="Reconnect">
-                  <RefreshCw />
+                <button
+                  onClick={toggleFullscreen}
+                  title="Fullscreen"
+                  style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex' }}
+                >
+                  <Expand size={20} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div
+              className="form-error"
+              style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+            >
+              <span>{error}</span>
+              <button className="button ghost" onClick={reconnect} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}>
+                Reconnect
+              </button>
+            </div>
+          )}
+
+          {/* Stream Information Box */}
+          <div className="stream-meta-box">
+            <h1 style={{ fontSize: '1.4rem', fontWeight: '800', margin: '0 0 0.85rem' }}>
+              {stream?.title || 'Live Stream Broadcast'}
+            </h1>
+
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '1rem',
+                borderBottom: '1px solid var(--border-subtle)',
+                paddingBottom: '1rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div className="avatar-small" style={{ width: '2.5rem', height: '2.5rem', fontSize: '1rem' }}>
+                  {stream?.owner?.name?.charAt(0).toUpperCase() || 'C'}
+                </div>
+                <div>
+                  <strong style={{ display: 'block', fontSize: '0.95rem' }}>{stream?.owner?.name || 'Creator'}</strong>
+                  <small style={{ color: 'var(--text-muted)' }}>@{stream?.owner?.username || 'streamer'}</small>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button
+                  onClick={() => react('like')}
+                  className={`button ${myReaction === 'like' ? 'primary' : 'secondary'}`}
+                  style={{ padding: '0.5rem 0.85rem', fontSize: '0.8rem' }}
+                >
+                  <ThumbsUp size={15} /> {reactions.likes || 0}
+                </button>
+                <button
+                  onClick={() => react('dislike')}
+                  className={`button ${myReaction === 'dislike' ? 'primary' : 'secondary'}`}
+                  style={{ padding: '0.5rem 0.85rem', fontSize: '0.8rem' }}
+                >
+                  <ThumbsDown size={15} />
+                </button>
+                <button
+                  onClick={() => setShowShare(true)}
+                  className="button secondary"
+                  style={{ padding: '0.5rem 0.85rem', fontSize: '0.8rem' }}
+                >
+                  <Share2 size={15} /> Share
                 </button>
               </div>
             </div>
 
-            <div className="reaction-bar" aria-label="Stream reactions">
-              <button className={myReaction === 'like' ? 'active' : ''} onClick={() => react('like')}>
-                <ThumbsUp size={16} /> Like {reactions.likes}
-              </button>
-              <button className={myReaction === 'dislike' ? 'active' : ''} onClick={() => react('dislike')}>
-                <ThumbsDown size={16} /> Dislike {reactions.dislikes}
-              </button>
-              <button onClick={share}>
-                {shared ? <Copy size={16} /> : <Share2 size={16} />} {shared ? 'Link copied' : 'Share'}
-              </button>
+            <div style={{ marginTop: '1rem' }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  backgroundColor: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '9999px',
+                  padding: '0.25rem 0.65rem',
+                  fontSize: '0.75rem',
+                  color: 'var(--accent-secondary)',
+                  fontWeight: '600',
+                  marginBottom: '0.5rem',
+                }}
+              >
+                {stream?.category || 'Live Streaming'}
+              </span>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: '1.6', margin: 0 }}>
+                {stream?.description || 'No description provided for this broadcast.'}
+              </p>
             </div>
-            <h3>{stream?.description}</h3>
+          </div>
+        </div>
+
+        {/* Right Column: YouTube Live Style Chat Drawer */}
+        <aside className="stream-chat-card">
+          <div className="chat-card-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MessageSquare size={16} color="var(--accent-primary)" />
+              <span>Live Chat</span>
+            </div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Top chat</span>
           </div>
 
-          <aside className="chat-panel">
-            <h3>Live comments</h3>
-            <div className="chat-messages">
-              {messages.map((item) => (
-                <div key={item.id}>
-                  <strong>{item.sender}</strong>
-                  <span>{item.message}</span>
+          <div className="chat-card-body">
+            {messages.length === 0 ? (
+              <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                <p>Welcome to live chat!</p>
+                <small>Messages appear here in real-time.</small>
+              </div>
+            ) : (
+              messages.map((item) => (
+                <div key={item.id} style={{ fontSize: '0.85rem', lineHeight: '1.45', display: 'flex', gap: '0.5rem' }}>
+                  <span
+                    style={{
+                      width: '1.5rem',
+                      height: '1.5rem',
+                      borderRadius: '50%',
+                      backgroundColor: 'var(--accent-primary-light)',
+                      color: 'var(--accent-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.7rem',
+                      fontWeight: '700',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {item.sender?.charAt(0).toUpperCase() || 'U'}
+                  </span>
+                  <div>
+                    <strong style={{ color: '#c084fc', marginRight: '0.4rem', fontSize: '0.8rem' }}>
+                      {item.sender}
+                    </strong>
+                    <span style={{ color: 'var(--text-primary)' }}>{item.message}</span>
+                  </div>
                 </div>
-              ))}
-            </div>
-            <form onSubmit={send}>
+              ))
+            )}
+          </div>
+
+          <form className="chat-card-input-box" onSubmit={sendChat}>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
               <input
                 value={message}
-                onChange={(event) => setMessage(event.target.value)}
-                placeholder="Add a comment"
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Chat as viewer..."
+                maxLength={300}
+                style={{
+                  flex: 1,
+                  backgroundColor: 'var(--bg-app)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.85rem',
+                  padding: '0.65rem 0.85rem',
+                  outline: 'none',
+                }}
               />
-              <button aria-label="Send comment">
-                <Send size={16} />
+              <button
+                type="submit"
+                className="button primary"
+                disabled={!message.trim()}
+                style={{ padding: '0.65rem 0.9rem' }}
+              >
+                <Send size={15} />
               </button>
-            </form>
-          </aside>
-        </section>
-      )}
+            </div>
+          </form>
+        </aside>
+      </div>
     </div>
   );
 }
-
-function RadioIcon() { return <span aria-hidden="true">●</span>; }

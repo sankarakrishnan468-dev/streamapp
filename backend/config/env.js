@@ -1,5 +1,10 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 
-import 'dotenv/config';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config();
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -27,6 +32,7 @@ export const env = {
   livekitUrl: (process.env.LIVEKIT_URL || '').trim().replace(/^["']|["']$/g, ''),
   livekitApiKey: (process.env.LIVEKIT_API_KEY || '').trim().replace(/^["']|["']$/g, ''),
   livekitApiSecret: (process.env.LIVEKIT_API_SECRET || '').trim().replace(/^["']|["']$/g, ''),
+  openaiApiKey: (process.env.OPENAI_API_KEY || '').trim().replace(/^["']|["']$/g, ''),
 };
 
 env.frontendUrl = env.frontendUrls[0];

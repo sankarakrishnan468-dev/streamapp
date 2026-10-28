@@ -1,5 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye, FileVideo, Mic, MicOff, Monitor, Pause, Play, RefreshCw, Square, UserMinus, Video } from 'lucide-react';
+import {
+  AlertCircle,
+  Eye,
+  FileVideo,
+  Mic,
+  MicOff,
+  Monitor,
+  Pause,
+  Play,
+  Radio,
+  RefreshCw,
+  Send,
+  Square,
+  Users,
+  Video,
+  VideoOff,
+} from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { api, getApiError, getSocketOptions, rtcConfiguration, socketUrl } from '../../services/api.js';
@@ -21,12 +37,12 @@ export default function StreamStudio() {
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState('');
   const [muted, setMuted] = useState(false);
+  const [cameraOff, setCameraOff] = useState(false);
   const [error, setError] = useState('');
   const [videoSource, setVideoSource] = useState('camera'); // 'camera' | 'file' | 'screen'
   const [activeFileName, setActiveFileName] = useState('');
   const [filePlaying, setFilePlaying] = useState(false);
 
-  // Helper to replace outgoing tracks on all active peer connections
   function switchStreamTracks(newStream) {
     if (!newStream) return;
     const newVideoTrack = newStream.getVideoTracks()[0];
@@ -51,424 +67,347 @@ export default function StreamStudio() {
         }
       }
     });
-
-    media.current = newStream;
-    if (preview.current) {
-      preview.current.srcObject = newStream;
-      preview.current.play().catch(() => {});
-    }
   }
 
-  // Switch back to Camera
-  async function switchToCamera() {
-    try {
-      if (fileVideoRef.current) {
-        fileVideoRef.current.pause();
-        fileVideoRef.current.src = '';
+  async function createOffer(targetSocketId) {
+    if (!media.current) return;
+    const peer = new RTCPeerConnection(rtcConfiguration);
+    peers.current.set(targetSocketId, peer);
+
+    media.current.getTracks().forEach((track) => {
+      peer.addTrack(track, media.current);
+    });
+
+    peer.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        socket.current?.emit('stream:webrtc-ice', { targetSocketId, candidate });
       }
-      const camStream = await captureMedia();
-      switchStreamTracks(camStream);
-      setVideoSource('camera');
-      setActiveFileName('');
-    } catch (err) {
-      setError(mediaError(err));
-    }
-  }
-
-  // Handle local video file upload (MP4, WebM, etc.)
-  async function handleFileSelect(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    };
 
     try {
-      const videoEl = fileVideoRef.current;
-      if (!videoEl) return;
-
-      const fileUrl = URL.createObjectURL(file);
-      videoEl.src = fileUrl;
-      videoEl.loop = true;
-      videoEl.muted = false;
-
-      await videoEl.play();
-
-      let streamFromFile;
-      if (typeof videoEl.captureStream === 'function') {
-        streamFromFile = videoEl.captureStream();
-      } else if (typeof videoEl.mozCaptureStream === 'function') {
-        streamFromFile = videoEl.mozCaptureStream();
-      } else {
-        throw new Error('Your browser does not support captureStream from video elements.');
-      }
-
-      switchStreamTracks(streamFromFile);
-      setVideoSource('file');
-      setActiveFileName(file.name);
-      setFilePlaying(true);
-    } catch (err) {
-      setError('Unable to stream video file: ' + (err.message || 'Browser support limitation'));
-    }
-  }
-
-  // Handle Screen Share as stream source
-  async function handleScreenShare() {
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      setError('Screen sharing is not supported by your browser.');
-      return;
-    }
-    try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { cursor: 'always' },
-        audio: true,
-      });
-
-      // When user clicks browser stop sharing button
-      const screenTrack = screenStream.getVideoTracks()[0];
-      if (screenTrack) {
-        screenTrack.onended = () => {
-          switchToCamera();
-        };
-      }
-
-      switchStreamTracks(screenStream);
-      setVideoSource('screen');
-      setActiveFileName('Screen Share');
-    } catch (err) {
-      if (err.name !== 'NotAllowedError') {
-        setError('Could not start screen sharing: ' + err.message);
-      }
-    }
-  }
-
-  function toggleFilePlayPause() {
-    if (!fileVideoRef.current) return;
-    if (fileVideoRef.current.paused) {
-      fileVideoRef.current.play();
-      setFilePlaying(true);
-    } else {
-      fileVideoRef.current.pause();
-      setFilePlaying(false);
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      socket.current?.emit('stream:webrtc-offer', { targetSocketId, description: peer.localDescription });
+    } catch {
+      setError('Unable to negotiate connection with incoming viewer.');
     }
   }
 
   useEffect(() => {
     let active = true;
-    async function init() {
+
+    async function setup() {
       try {
         const { data } = await api.get(`/streams/${id}`);
         if (!active) return;
         setStream(data.stream);
 
+        // Acquire initial camera/mic
         try {
-          media.current = await captureMedia();
-          if (preview.current) preview.current.srcObject = media.current;
-        } catch (cameraError) {
-          setError(mediaError(cameraError));
-          return;
+          const streamMedia = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          media.current = streamMedia;
+          if (preview.current) {
+            preview.current.srcObject = streamMedia;
+          }
+        } catch {
+          setError('Camera/microphone preview is not available on this device.');
         }
 
         const client = io(socketUrl, getSocketOptions());
         socket.current = client;
 
         client.on('connect', () => {
-          console.log('[StreamStudio Socket] Connected:', client.id);
           client.emit('stream:join', { streamId: id, mode: 'studio' });
         });
 
-        client.on('connect_error', (err) => {
-          console.error('[StreamStudio Socket] Connect error:', err.message);
-          setError('Live connection is offline. Check that the backend is running.');
-        });
-
-        client.on('stream:error', ({ error: nextError }) => {
-          setError(nextError || 'Stream connection failed.');
+        client.on('stream:viewer-joined', ({ viewerId }) => {
+          createOffer(viewerId);
         });
 
         client.on('stream:viewer-count', ({ count: next }) => setCount(next));
-        client.on('stream:viewers', ({ viewers: next }) => setViewers(next));
+        client.on('stream:viewers', ({ viewers: next }) => setViewers(next || []));
         client.on('stream:chat', (item) => {
-          setMessages((items) => items.some((m) => m.id === item.id) ? items : [...items, item]);
-        });
-
-        client.on('stream:viewer-joined', async ({ viewerId }) => {
-          if (!media.current) return;
-          peers.current.get(viewerId)?.close();
-          const peer = new RTCPeerConnection(rtcConfiguration);
-          peers.current.set(viewerId, peer);
-          pendingIce.current.delete(viewerId);
-
-          media.current.getTracks().forEach((track) => peer.addTrack(track, media.current));
-
-          peer.onicecandidate = ({ candidate }) => {
-            if (candidate) client.emit('stream:webrtc-ice', { targetSocketId: viewerId, candidate });
-          };
-
-          peer.onconnectionstatechange = () => {
-            if (['failed', 'closed'].includes(peer.connectionState)) {
-              peer.close();
-              peers.current.delete(viewerId);
-            }
-          };
-
-          try {
-            const offer = await peer.createOffer();
-            await peer.setLocalDescription(offer);
-            client.emit('stream:webrtc-offer', { targetSocketId: viewerId, description: peer.localDescription });
-          } catch {
-            setError('Unable to create a connection for this viewer.');
-          }
+          setMessages((prev) => (prev.some((m) => m.id === item.id) ? prev : [...prev, item]));
         });
 
         client.on('stream:webrtc-answer', async ({ viewerId, description }) => {
-          const connection = peers.current.get(viewerId);
-          if (!connection || connection.signalingState !== 'have-local-offer') return;
-          await connection.setRemoteDescription(description);
-          await flushIce(connection, pendingIce.current.get(viewerId));
-          pendingIce.current.delete(viewerId);
+          const peer = peers.current.get(viewerId);
+          if (peer) {
+            await peer.setRemoteDescription(description).catch(() => {});
+            const pending = pendingIce.current.get(viewerId) || [];
+            for (const cand of pending) {
+              await peer.addIceCandidate(cand).catch(() => {});
+            }
+            pendingIce.current.delete(viewerId);
+          }
         });
 
         client.on('stream:webrtc-ice', async ({ fromSocketId, candidate }) => {
-          const connection = peers.current.get(fromSocketId);
-          if (!connection || !connection.remoteDescription) {
+          const peer = peers.current.get(fromSocketId);
+          if (peer?.remoteDescription) {
+            await peer.addIceCandidate(candidate).catch(() => {});
+          } else {
             const list = pendingIce.current.get(fromSocketId) || [];
             list.push(candidate);
             pendingIce.current.set(fromSocketId, list);
-            return;
           }
-          await connection.addIceCandidate(candidate).catch(() => {});
         });
-      } catch (requestError) {
-        if (active) setError(getApiError(requestError, 'Unable to load this stream studio.'));
+
+        client.on('stream:error', (sErr) => setError(sErr.error));
+      } catch (err) {
+        setError(getApiError(err, 'Unable to initialize studio'));
       }
     }
 
-    init();
+    setup();
+
     return () => {
       active = false;
-      peers.current.forEach((peer) => peer.close());
-      peers.current.clear();
-      pendingIce.current.clear();
+      media.current?.getTracks().forEach((t) => t.stop());
+      peers.current.forEach((p) => p.close());
       socket.current?.disconnect();
-      media.current?.getTracks().forEach((track) => track.stop());
-      if (fileVideoRef.current) {
-        fileVideoRef.current.pause();
-        fileVideoRef.current.src = '';
-      }
     };
   }, [id]);
 
-  async function changeState(next) {
+  async function setScreenShare() {
     try {
-      const { data } = await api.patch(`/streams/${id}/state`, { status: next });
-      setStream(data.stream);
-    } catch (requestError) {
-      setError(getApiError(requestError, 'Unable to update stream status.'));
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      if (preview.current) preview.current.srcObject = screenStream;
+      media.current = screenStream;
+      setVideoSource('screen');
+      switchStreamTracks(screenStream);
+      screenStream.getVideoTracks()[0].onended = () => resetToCamera();
+    } catch {
+      setError('Screen sharing was cancelled or unavailable.');
     }
   }
 
-  async function end() {
+  async function resetToCamera() {
     try {
-      await api.post(`/streams/${id}/end`);
-      socket.current?.disconnect();
-      navigate('/live');
-    } catch (requestError) {
-      setError(getApiError(requestError, 'Unable to end this stream.'));
-    }
+      const camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      if (preview.current) preview.current.srcObject = camStream;
+      media.current = camStream;
+      setVideoSource('camera');
+      switchStreamTracks(camStream);
+    } catch {}
   }
 
-  function send(event) {
-    event.preventDefault();
-    if (message.trim()) {
-      socket.current?.emit('stream:chat', { message });
-      setMessage('');
+  function toggleMute() {
+    if (!media.current) return;
+    const next = !muted;
+    media.current.getAudioTracks().forEach((t) => (t.enabled = !next));
+    setMuted(next);
+  }
+
+  function toggleCamera() {
+    if (!media.current) return;
+    const next = !cameraOff;
+    media.current.getVideoTracks().forEach((t) => (t.enabled = !next));
+    setCameraOff(next);
+  }
+
+  function sendChat(e) {
+    e.preventDefault();
+    if (!message.trim()) return;
+    socket.current?.emit('stream:chat', { message: message.trim() });
+    setMessage('');
+  }
+
+  async function handleEndBroadcast() {
+    if (window.confirm('Are you sure you want to end this live broadcast?')) {
+      try {
+        await api.post(`/streams/${id}/end`);
+        navigate('/creator-dashboard');
+      } catch (err) {
+        setError(getApiError(err, 'Failed to end broadcast'));
+      }
     }
   }
 
   return (
-    <div className="meeting-room">
-      <header className="meeting-header">
+    <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
+      {/* Studio Top Control Banner */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          backgroundColor: 'var(--bg-surface)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-xl)',
+          padding: '1.25rem 1.75rem',
+          marginBottom: '1.5rem',
+        }}
+      >
         <div>
-          <strong>{stream?.title || 'Stream studio'}</strong>
-          <small>
-            <Eye size={14} /> {count} connected viewers · status: {stream?.status || 'loading'}
-            {activeFileName && <span> · Playing: <strong>{activeFileName}</strong></span>}
-          </small>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <span className="live-badge"><Radio size={12} /> ON AIR</span>
+            <h1 style={{ fontSize: '1.25rem', margin: 0 }}>{stream?.title || 'Creator Studio'}</h1>
+          </div>
+          <p style={{ margin: '0.25rem 0 0', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            Category: {stream?.category || 'General'} · Status: {stream?.status || 'Active'}
+          </p>
         </div>
-        <div className="call-controls">
-          <button
-            className="control"
-            onClick={() => changeState(stream?.status === 'paused' ? 'live' : 'paused')}
-            disabled={!stream || stream.status === 'ended'}
-          >
-            {stream?.status === 'paused' ? <Play /> : <Pause />}
-            <span>{stream?.status === 'paused' ? 'Resume' : 'Pause'}</span>
-          </button>
-          <button
-            className="control danger"
-            onClick={end}
-            disabled={!stream || stream.status === 'ended'}
-          >
-            <Square />
-            <span>End</span>
-          </button>
-        </div>
-      </header>
 
-      {error && <div className="meeting-error">{error}</div>}
-
-      {/* Hidden HTML5 video element for rendering uploaded video file into MediaStream */}
-      <video
-        ref={fileVideoRef}
-        playsInline
-        style={{ display: 'none' }}
-        onEnded={() => setFilePlaying(false)}
-      />
-
-      <section className="call-layout">
-        <div>
-          <div style={{ position: 'relative' }}>
-            <video className="stream-player" ref={preview} autoPlay muted playsInline />
-            <div style={{
-              position: 'absolute',
-              top: '12px',
-              left: '12px',
-              display: 'flex',
-              gap: '6px',
-              background: 'rgba(0,0,0,0.6)',
-              backdropFilter: 'blur(6px)',
-              padding: '6px 10px',
-              borderRadius: '8px',
-              fontSize: '0.75rem',
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span
+            style={{
+              display: 'inline-flex',
               alignItems: 'center',
-              zIndex: 10
-            }}>
-              <span style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: videoSource === 'camera' ? '#10b981' : '#6366f1'
-              }} />
-              <span>Source: <strong>{videoSource.toUpperCase()}</strong> {activeFileName ? `(${activeFileName})` : ''}</span>
+              gap: '0.35rem',
+              padding: '0.5rem 0.85rem',
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: 'var(--bg-app)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+            }}
+          >
+            <Users size={15} color="var(--accent-primary)" /> {count} Live Viewers
+          </span>
+
+          <button onClick={handleEndBroadcast} className="button danger" style={{ fontWeight: '700' }}>
+            <Square size={14} fill="#fff" /> End Stream
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="form-error" style={{ marginBottom: '1.5rem' }}>{error}</div>}
+
+      {/* Main Studio Work Area */}
+      <div className="stream-view-layout">
+        {/* Left Column: Broadcaster Preview & Hardware Switching */}
+        <div>
+          <div className="stream-player-container">
+            <video ref={preview} autoPlay muted playsInline />
+
+            {/* Media Mode Pill */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '1rem',
+                left: '1rem',
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.75rem',
+                color: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+              }}
+            >
+              {videoSource === 'camera' && <Video size={13} color="#34d399" />}
+              {videoSource === 'screen' && <Monitor size={13} color="#60a5fa" />}
+              <span style={{ textTransform: 'capitalize' }}>Source: {videoSource}</span>
             </div>
           </div>
 
-          <div className="participant-list" style={{ marginTop: '1rem' }}>
-            <strong>Viewer list ({viewers.length}/50)</strong>
-            {viewers.map((viewer) => (
-              <span key={viewer.socketId}>
-                <UserMinus size={14} />
-                {viewer.name}
-              </span>
-            ))}
+          {/* Broadcaster Device Bar */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.75rem',
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '1rem 1.25rem',
+              marginTop: '1rem',
+            }}
+          >
+            <div style={{ display: 'flex', gap: '0.6rem' }}>
+              <button
+                onClick={toggleMute}
+                className={`button ${muted ? 'danger' : 'secondary'}`}
+                style={{ fontSize: '0.8rem' }}
+              >
+                {muted ? <MicOff size={15} /> : <Mic size={15} />}
+                <span>{muted ? 'Unmute Mic' : 'Mute Mic'}</span>
+              </button>
+
+              <button
+                onClick={toggleCamera}
+                className={`button ${cameraOff ? 'danger' : 'secondary'}`}
+                style={{ fontSize: '0.8rem' }}
+              >
+                {cameraOff ? <VideoOff size={15} /> : <Video size={15} />}
+                <span>{cameraOff ? 'Turn Camera On' : 'Turn Camera Off'}</span>
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.6rem' }}>
+              {videoSource !== 'camera' ? (
+                <button onClick={resetToCamera} className="button secondary" style={{ fontSize: '0.8rem' }}>
+                  <Video size={15} /> Back to Camera
+                </button>
+              ) : (
+                <button onClick={setScreenShare} className="button primary" style={{ fontSize: '0.8rem' }}>
+                  <Monitor size={15} /> Present Screen
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        <aside className="chat-panel">
-          <h3>Live chat</h3>
-          <div className="chat-messages">
-            {messages.map((item) => (
-              <div key={item.id}>
-                <strong>{item.sender}</strong>
-                <span>{item.message}</span>
-              </div>
-            ))}
+        {/* Right Column: Live Chat Panel */}
+        <aside className="stream-chat-card">
+          <div className="chat-card-header">
+            <span>Stream Chat & Activity</span>
+            <small style={{ color: 'var(--text-muted)' }}>Moderator</small>
           </div>
-          <form onSubmit={send}>
-            <input
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="Moderate chat"
-            />
-            <button>Send</button>
+
+          <div className="chat-card-body">
+            {messages.length === 0 ? (
+              <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                <p>Chat will appear here</p>
+                <small>Viewers can send messages to your stream.</small>
+              </div>
+            ) : (
+              messages.map((item) => (
+                <div key={item.id} style={{ fontSize: '0.85rem', lineHeight: '1.45', display: 'flex', gap: '0.5rem' }}>
+                  <strong style={{ color: '#c084fc', fontSize: '0.8rem' }}>{item.sender}:</strong>
+                  <span style={{ color: 'var(--text-primary)' }}>{item.message}</span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <form className="chat-card-input-box" onSubmit={sendChat}>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Send a host announcement..."
+                maxLength={300}
+                style={{
+                  flex: 1,
+                  backgroundColor: 'var(--bg-app)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.85rem',
+                  padding: '0.65rem 0.85rem',
+                  outline: 'none',
+                }}
+              />
+              <button
+                type="submit"
+                className="button primary"
+                disabled={!message.trim()}
+                style={{ padding: '0.65rem 0.9rem' }}
+              >
+                <Send size={15} />
+              </button>
+            </div>
           </form>
         </aside>
-      </section>
-
-      {/* Stream Controls Bar */}
-      <div className="call-controls" style={{ marginTop: '1.5rem', background: '#18181b', padding: '0.8rem', borderRadius: '1rem', border: '1px solid rgba(255,255,255,0.08)' }}>
-        {/* Switch Source Controls */}
-        <button
-          className={`control ${videoSource === 'camera' ? 'active' : ''}`}
-          onClick={switchToCamera}
-          title="Switch to Webcam"
-        >
-          <Video size={18} /> Camera
-        </button>
-
-        {/* Upload & Play Custom Video File */}
-        <input
-          type="file"
-          accept="video/mp4,video/webm,video/ogg,video/quicktime"
-          ref={fileInputRef}
-          style={{ display: 'none' }}
-          onChange={handleFileSelect}
-        />
-        <button
-          className={`control ${videoSource === 'file' ? 'active' : ''}`}
-          onClick={() => fileInputRef.current?.click()}
-          title="Play custom video file (MP4/WebM) on stream"
-        >
-          <FileVideo size={18} /> {videoSource === 'file' ? 'Change Video File' : 'Play Video File'}
-        </button>
-
-        {/* If video file is active, show pause/play button */}
-        {videoSource === 'file' && (
-          <button className="control" onClick={toggleFilePlayPause}>
-            {filePlaying ? <Pause size={18} /> : <Play size={18} />}
-            {filePlaying ? 'Pause File' : 'Resume File'}
-          </button>
-        )}
-
-        {/* Screen Share */}
-        <button
-          className={`control ${videoSource === 'screen' ? 'active' : ''}`}
-          onClick={handleScreenShare}
-          title="Share screen or browser tab into stream"
-        >
-          <Monitor size={18} /> Share Screen
-        </button>
-
-        <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.15)', margin: '0 8px' }} />
-
-        {/* Microphone mute toggle */}
-        <button
-          className="control"
-          onClick={() => {
-            const next = !muted;
-            media.current?.getAudioTracks().forEach((track) => {
-              track.enabled = !next;
-            });
-            setMuted(next);
-          }}
-          disabled={!media.current?.getAudioTracks().length}
-        >
-          {muted ? <MicOff size={18} /> : <Mic size={18} />} {muted ? 'Unmute' : 'Mute'} Audio
-        </button>
       </div>
     </div>
   );
-}
-
-async function flushIce(connection, candidates = []) { for (const candidate of candidates) await connection.addIceCandidate(candidate).catch(() => {}); }
-
-async function captureMedia() {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error('MEDIA_UNAVAILABLE');
-  try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch (error) {
-    // Some systems expose one device but reject the combined request.
-    const tracks = [];
-    try { tracks.push(...(await navigator.mediaDevices.getUserMedia({ video: true, audio: false })).getVideoTracks()); } catch {}
-    try { tracks.push(...(await navigator.mediaDevices.getUserMedia({ video: false, audio: true })).getAudioTracks()); } catch {}
-    if (tracks.some((track) => track.kind === 'video')) return new MediaStream(tracks);
-    tracks.forEach((track) => track.stop());
-    const unavailable = new Error('VIDEO_UNAVAILABLE'); unavailable.name = 'NotFoundError'; throw unavailable;
-    throw error;
-  }
-}
-
-function mediaError(error) {
-  if (!navigator.mediaDevices?.getUserMedia || (!window.isSecureContext && !['localhost', '127.0.0.1', '::1'].includes(window.location.hostname))) return 'Camera access requires HTTPS or localhost. Open the frontend using http://localhost:5173 or enable HTTPS.';
-  if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') return 'Camera or microphone permission was denied. Allow access for this site in the browser address-bar permissions, then reload the studio.';
-  if (error?.message === 'VIDEO_UNAVAILABLE') return 'No camera was available. Connect or enable a camera, close other apps using it, and reload the studio.';
-  if (error?.name === 'NotFoundError') return 'No camera or microphone was found. Connect a device and reload the studio.';
-  if (error?.name === 'NotReadableError') return 'The camera or microphone is already being used by another application. Close it and reload the studio.';
-  return 'The browser could not open your camera or microphone. Check device permissions and use HTTPS or localhost.';
 }
