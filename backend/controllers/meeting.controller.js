@@ -140,6 +140,9 @@ export async function getMeeting(req, res, next) {
     const isApprovedUser = meeting.approvedUsers?.some(
       (entry) => entry.user?.toString() === currentUserId
     );
+    const hasInviteList =
+      (meeting.invitedUsers && meeting.invitedUsers.length > 0) ||
+      Boolean(meeting.invitedViewer);
     if (hasInviteList && !isHost && !isInvitedUser && !isInvitedViewer && !isApprovedUser && !meeting.waitingRoom)
       return res
         .status(403)
@@ -264,7 +267,7 @@ export async function createMediaToken(req, res, next) {
     if (meeting.locked && !isHost)
       return res.status(423).json({ error: "This meeting is locked" });
 
-    if (!isHost && !isApproved)
+    if (!isHost && !isApproved && meeting.waitingRoom)
       return res.status(403).json({ error: "The host must approve your request before you can join" });
 
     if (

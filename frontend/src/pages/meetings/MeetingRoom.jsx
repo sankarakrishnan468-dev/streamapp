@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera, CameraOff, Copy, Mic, MicOff, MonitorUp, PhoneOff, Send, Share2, UserMinus, Users } from 'lucide-react';
-import { Room, RoomEvent, Track } from 'livekit-client';
+import { ParticipantEvent, Room, RoomEvent, Track } from 'livekit-client';
 import { io } from 'socket.io-client';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, getApiError, getSocketOptions, socketUrl } from '../../services/api.js';
@@ -76,18 +76,18 @@ function MediaTile({ participant, local = false, refreshKey }) {
     const handleTrackUnmuted = () => updateTracks();
     const handleSpeakingChanged = (speaking) => setIsSpeaking(speaking);
 
-    participant.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-    participant.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-    participant.on(RoomEvent.TrackMuted, handleTrackMuted);
-    participant.on(RoomEvent.TrackUnmuted, handleTrackUnmuted);
-    participant.on(RoomEvent.IsSpeakingChanged, handleSpeakingChanged);
+    participant.on(ParticipantEvent.TrackSubscribed, handleTrackSubscribed);
+    participant.on(ParticipantEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    participant.on(ParticipantEvent.TrackMuted, handleTrackMuted);
+    participant.on(ParticipantEvent.TrackUnmuted, handleTrackUnmuted);
+    participant.on(ParticipantEvent.IsSpeakingChanged, handleSpeakingChanged);
 
     return () => {
-      participant.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-      participant.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-      participant.off(RoomEvent.TrackMuted, handleTrackMuted);
-      participant.off(RoomEvent.TrackUnmuted, handleTrackUnmuted);
-      participant.off(RoomEvent.IsSpeakingChanged, handleSpeakingChanged);
+      participant.off(ParticipantEvent.TrackSubscribed, handleTrackSubscribed);
+      participant.off(ParticipantEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+      participant.off(ParticipantEvent.TrackMuted, handleTrackMuted);
+      participant.off(ParticipantEvent.TrackUnmuted, handleTrackUnmuted);
+      participant.off(ParticipantEvent.IsSpeakingChanged, handleSpeakingChanged);
 
       if (currentVideoTrack && videoRef.current) {
         try { currentVideoTrack.detach(videoRef.current); } catch {}
@@ -623,14 +623,14 @@ export default function MeetingRoom() {
             <span key={participant.identity}>
               <button
                 onClick={() =>
-                  socketRef.current?.emit('meeting:mute', { targetSocketId: participant.identity })
+                  socketRef.current?.emit('meeting:mute', { targetSocketId: participant.identity.split('_')[0] })
                 }
               >
                 <MicOff size={14} /> Mute {participant.name || 'Participant'}
               </button>
               <button
                 onClick={() =>
-                  socketRef.current?.emit('meeting:kick', { targetSocketId: participant.identity })
+                  socketRef.current?.emit('meeting:kick', { targetSocketId: participant.identity.split('_')[0] })
                 }
               >
                 <UserMinus size={14} /> Remove
