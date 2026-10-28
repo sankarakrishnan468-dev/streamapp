@@ -13,6 +13,7 @@ function MediaTile({ participant, local = false, refreshKey }) {
   const audioRef = useRef(null);
   const [hasVideo, setHasVideo] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
 
   useEffect(() => {
     let currentVideoTrack = null;
@@ -46,7 +47,10 @@ function MediaTile({ participant, local = false, refreshKey }) {
           setHasVideo(false);
         }
       } else if (videoPub) {
-        setHasVideo(!videoPub.isMuted);
+        setHasVideo(!videoPub.isMuted && Boolean(nextVideoTrack));
+        if (nextVideoTrack && videoRef.current && !videoPub.isMuted) {
+          videoRef.current.play().catch(() => {});
+        }
       } else {
         setHasVideo(false);
       }
@@ -61,7 +65,7 @@ function MediaTile({ participant, local = false, refreshKey }) {
             try {
               nextAudioTrack.attach(audioRef.current);
               audioRef.current.autoplay = true;
-              audioRef.current.play().catch(() => {});
+              audioRef.current.play().then(() => setAudioBlocked(false)).catch(() => setAudioBlocked(true));
             } catch {}
           }
         }
@@ -72,12 +76,18 @@ function MediaTile({ participant, local = false, refreshKey }) {
 
     const handleTrackSubscribed = () => updateTracks();
     const handleTrackUnsubscribed = () => updateTracks();
+    const handleTrackPublished = () => updateTracks();
+    const handleTrackUnpublished = () => updateTracks();
     const handleTrackMuted = () => updateTracks();
     const handleTrackUnmuted = () => updateTracks();
     const handleSpeakingChanged = (speaking) => setIsSpeaking(speaking);
 
     participant.on(ParticipantEvent.TrackSubscribed, handleTrackSubscribed);
     participant.on(ParticipantEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    participant.on(ParticipantEvent.TrackPublished, handleTrackPublished);
+    participant.on(ParticipantEvent.TrackUnpublished, handleTrackUnpublished);
+    participant.on(ParticipantEvent.LocalTrackPublished, handleTrackPublished);
+    participant.on(ParticipantEvent.LocalTrackUnpublished, handleTrackUnpublished);
     participant.on(ParticipantEvent.TrackMuted, handleTrackMuted);
     participant.on(ParticipantEvent.TrackUnmuted, handleTrackUnmuted);
     participant.on(ParticipantEvent.IsSpeakingChanged, handleSpeakingChanged);
@@ -85,6 +95,10 @@ function MediaTile({ participant, local = false, refreshKey }) {
     return () => {
       participant.off(ParticipantEvent.TrackSubscribed, handleTrackSubscribed);
       participant.off(ParticipantEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+      participant.off(ParticipantEvent.TrackPublished, handleTrackPublished);
+      participant.off(ParticipantEvent.TrackUnpublished, handleTrackUnpublished);
+      participant.off(ParticipantEvent.LocalTrackPublished, handleTrackPublished);
+      participant.off(ParticipantEvent.LocalTrackUnpublished, handleTrackUnpublished);
       participant.off(ParticipantEvent.TrackMuted, handleTrackMuted);
       participant.off(ParticipantEvent.TrackUnmuted, handleTrackUnmuted);
       participant.off(ParticipantEvent.IsSpeakingChanged, handleSpeakingChanged);
@@ -98,13 +112,19 @@ function MediaTile({ participant, local = false, refreshKey }) {
     };
   }, [participant, local, refreshKey]);
 
+  function playAudioManually() {
+    if (audioRef.current) {
+      audioRef.current.play().then(() => setAudioBlocked(false)).catch(() => {});
+    }
+  }
+
   const name = participant.name || participant.identity || 'Participant';
   const publications = [...participant.trackPublications.values()];
   const mic = publications.find((item) => item.source === Track.Source.Microphone);
   const camera = publications.find((item) => item.source === Track.Source.Camera);
 
   return (
-    <div className={`video-tile ${hasVideo ? 'has-video' : 'no-video'}`}>
+    <div className={`video-tile ${hasVideo ? 'has-video' : 'no-video'}`} onClick={audioBlocked ? playAudioManually : undefined}>
       <video
         ref={videoRef}
         autoPlay
@@ -129,6 +149,15 @@ function MediaTile({ participant, local = false, refreshKey }) {
         </div>
       )}
       {!local && <audio ref={audioRef} autoPlay />}
+      {audioBlocked && !local && (
+        <button
+          className="button ghost"
+          style={{ position: 'absolute', top: '0.5rem', right: '0.5rem', zIndex: 3, fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+          onClick={(e) => { e.stopPropagation(); playAudioManually(); }}
+        >
+          🔊 Click to unmute
+        </button>
+      )}
       <span className="participant-label">
         {name}
         {local ? ' (You)' : ''}
@@ -200,19 +229,26 @@ export default function MeetingRoom() {
       room.on(RoomEvent.ParticipantDisconnected, refreshParticipants);
       room.on(RoomEvent.TrackSubscribed, refreshParticipants);
       room.on(RoomEvent.TrackUnsubscribed, refreshParticipants);
+      room.on(RoomEvent.TrackPublished, refreshParticipants);
+      room.on(RoomEvent.TrackUnpublished, refreshParticipants);
+      room.on(RoomEvent.TrackMuted, refreshParticipants);
+      room.on(RoomEvent.TrackUnmuted, refreshParticipants);
       room.on(RoomEvent.LocalTrackPublished, refreshParticipants);
       room.on(RoomEvent.LocalTrackUnpublished, refreshParticipants);
       room.on(RoomEvent.ActiveSpeakersChanged, refreshParticipants);
       room.on(RoomEvent.Reconnecting, () => {
+        console.warn('[MeetingRoom LiveKit] Reconnecting…');
         setStatus('reconnecting');
         setError('Connection interrupted. Reconnecting…');
       });
       room.on(RoomEvent.Reconnected, () => {
+        console.log('[MeetingRoom LiveKit] Reconnected successfully');
         setStatus('connected');
         setError('');
         refreshParticipants();
       });
       room.on(RoomEvent.ConnectionStateChanged, (state) => {
+        console.log('[MeetingRoom LiveKit] Connection state:', state);
         setStatus(state);
         if (state === 'disconnected') setError('LiveKit connection lost. Please check your network.');
       });
@@ -288,9 +324,17 @@ export default function MeetingRoom() {
         const socket = io(socketUrl, getSocketOptions());
         socketRef.current = socket;
 
+        socket.on('connect', () => {
+          console.log('[MeetingRoom Socket] Connected:', socket.id);
+          socket.emit('meeting:join', { roomId, sessionId: sessionId.current });
+        });
         socket.on('connect_error', (event) => {
+          console.error('[MeetingRoom Socket] Connect error:', event.message);
           setStatus('disconnected');
           setError(event.message || 'Meeting events are unavailable.');
+        });
+        socket.on('disconnect', (reason) => {
+          console.warn('[MeetingRoom Socket] Disconnected:', reason);
         });
         socket.on('meeting:error', ({ error: nextError }) => {
           setStatus('denied');
@@ -315,7 +359,7 @@ export default function MeetingRoom() {
         socket.on('meeting:ended', ({ message: nextMessage }) => {
           setStatus('ended');
           setError(nextMessage || 'This meeting has ended.');
-          roomRef.current?.disconnect();
+          roomRef.current?.disconnect().catch(() => {});
           roomRef.current = null;
         });
         socket.on('meeting:force-muted', ({ message: nextMessage }) => {
@@ -354,12 +398,8 @@ export default function MeetingRoom() {
           leave();
         });
 
-        socket.on('connect', () => {
-          socket.emit('meeting:join', { roomId, sessionId: sessionId.current });
-        });
-
-        // If host or meeting has no waiting room, connect media immediately
-        if (data.meeting.isHost || !data.meeting.waitingRoom) {
+        // If host, meeting has no waiting room, or viewer is already approved, connect media immediately
+        if (data.meeting.isHost || !data.meeting.waitingRoom || data.meeting.isApproved) {
           connectMedia();
         }
       } catch (requestError) {
@@ -382,12 +422,20 @@ export default function MeetingRoom() {
   }, [roomId]);
 
   function approve(request) {
-    socketRef.current?.emit('meeting:guest-approve', { targetSocketId: request.socketId });
+    socketRef.current?.emit('meeting:guest-approve', {
+      targetSocketId: request.socketId,
+      targetUserId: request.userId,
+      requestKey: request.requestKey,
+    });
     setPending((items) => items.filter((item) => item.requestKey !== request.requestKey));
   }
 
   function reject(request) {
-    socketRef.current?.emit('meeting:guest-reject', { targetSocketId: request.socketId });
+    socketRef.current?.emit('meeting:guest-reject', {
+      targetSocketId: request.socketId,
+      targetUserId: request.userId,
+      requestKey: request.requestKey,
+    });
     setPending((items) => items.filter((item) => item.requestKey !== request.requestKey));
   }
 
@@ -471,8 +519,17 @@ export default function MeetingRoom() {
   async function leave(redirect = true) {
     if (leaving.current) return;
     leaving.current = true;
+    try {
+      if (roomRef.current?.localParticipant) {
+        for (const publication of roomRef.current.localParticipant.trackPublications.values()) {
+          if (publication.track) {
+            try { publication.track.stop(); } catch {}
+          }
+        }
+      }
+    } catch {}
     await api.post(`/meetings/${roomId}/leave`, { sessionId: sessionId.current }).catch(() => {});
-    await roomRef.current?.disconnect();
+    await roomRef.current?.disconnect().catch(() => {});
     roomRef.current = null;
     socketRef.current?.disconnect();
     if (redirect) navigate('/meetings');

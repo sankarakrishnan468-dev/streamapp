@@ -258,7 +258,7 @@ export async function createMediaToken(req, res, next) {
       (meeting.invitedUsers && meeting.invitedUsers.length > 0) ||
       Boolean(meeting.invitedViewer);
 
-    const isApproved = meeting.approvedUsers?.some((entry) => entry.user.toString() === userId);
+    const isApproved = meeting.approvedUsers?.some((entry) => entry.user?.toString() === userId);
     if (hasInviteList && !isHost && !isInvitedUser && !isInvitedViewer && !isApproved && !meeting.waitingRoom)
       return res
         .status(403)
@@ -288,9 +288,20 @@ export async function createMediaToken(req, res, next) {
         .status(400)
         .json({ error: "A valid meeting session is required" });
 
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
     await Meeting.updateOne(
       { _id: meeting._id },
-      { $pull: { activeParticipants: { user: req.user._id } } },
+      {
+        $pull: {
+          activeParticipants: {
+            $or: [
+              { user: req.user._id },
+              { sessionId },
+              { joinedAt: { $lt: twoHoursAgo } },
+            ],
+          },
+        },
+      },
     );
 
     const admitted = await Meeting.findOneAndUpdate(

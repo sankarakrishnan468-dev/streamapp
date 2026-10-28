@@ -54,10 +54,10 @@ export function installMeetingSockets(io) {
       const hasInviteList =
         (meeting.invitedUsers && meeting.invitedUsers.length > 0) ||
         Boolean(meeting.invitedViewer);
-      const isApproved = meeting.approvedUsers?.some((entry) => entry.user.toString() === socket.user._id.toString());
+      const isApproved = meeting.approvedUsers?.some((entry) => entry.user?.toString() === socket.user._id.toString());
       const needsApproval = !isHost && meeting.waitingRoom && !isApproved;
 
-      if (hasInviteList && !isHost && !isInvited) {
+      if (hasInviteList && !isHost && !isInvited && !isApproved && !meeting.waitingRoom) {
         return socket.emit('meeting:error', { error: 'You are not invited to this private call' });
       }
       const room = activeRooms.get(roomId) || new Map();
@@ -72,7 +72,7 @@ export function installMeetingSockets(io) {
         }
       }
       const admittedCount = [...room.values()].filter((item) => item.approved).length;
-      if (!room.has(socket.id) && !isApproved && admittedCount >= meeting.maxParticipants) return socket.emit('meeting:error', { error: 'This meeting is full (maximum 5 participants)' });
+      if (!room.has(socket.id) && !isApproved && admittedCount >= meeting.maxParticipants) return socket.emit('meeting:error', { error: `This meeting is full (maximum ${meeting.maxParticipants || 5} participants)` });
       const participant = { socketId: socket.id, sessionId: String(sessionId || ''), requestKey, userId: socket.user?._id.toString() || null, name: socket.user ? (socket.user.username ? `${socket.user.name} (@${socket.user.username})` : socket.user.name) : 'Guest viewer', username: socket.user?.username, isHost, approved: !needsApproval };
       room.set(socket.id, participant); activeRooms.set(roomId, room); socket.join(`meeting:${roomId}`); socket.data.roomId = roomId;
       socket.data.sessionId = participant.sessionId;
@@ -101,23 +101,57 @@ export function installMeetingSockets(io) {
       }
     });
 
-    socket.on('meeting:guest-approve', async ({ targetSocketId }) => {
-      const roomId = socket.data.roomId; const room = roomId && activeRooms.get(roomId); const target = room?.get(targetSocketId);
+    socket.on('meeting:guest-approve', async ({ targetSocketId, targetUserId, requestKey }) => {
+      const roomId = socket.data.roomId;
+      const room = roomId && activeRooms.get(roomId);
+      let target = targetSocketId ? room?.get(targetSocketId) : null;
+      let actualSocketId = targetSocketId;
+      if (!target && room) {
+        for (const [sId, p] of room) {
+          if ((targetUserId && p.userId === String(targetUserId)) || (requestKey && p.requestKey === requestKey)) {
+            target = p;
+            actualSocketId = sId;
+            break;
+          }
+        }
+      }
       if (!room || !target || !socket.user || (room.get(socket.id)?.isHost !== true) || target.approved) return;
       const meeting = await Meeting.findOne({ roomId, status: 'active' });
       const admittedCount = [...room.values()].filter((item) => item.approved).length;
       if (!meeting || admittedCount >= meeting.maxParticipants) return socket.emit('meeting:notification', { message: `This call is full (maximum ${meeting?.maxParticipants || 5} participants).` });
-      target.approved = true; room.set(targetSocketId, target); const targetSocket = io.sockets.sockets.get(targetSocketId); if (!targetSocket) return;
+      target.approved = true;
+      room.set(actualSocketId, target);
+      const targetSocket = io.sockets.sockets.get(actualSocketId);
       pendingRequests.get(roomId)?.delete(target.requestKey);
       await Meeting.updateOne({ roomId, status: 'active' }, { $pull: { pendingJoinRequests: { user: target.userId } }, $addToSet: { approvedUsers: { user: target.userId } } });
-      targetSocket.data.approved = true; targetSocket.emit('meeting:approved'); targetSocket.emit('meeting:participants', { participants: [...room.values()].filter((item) => item.socketId !== targetSocketId && item.approved) });
-      targetSocket.broadcast.to(`meeting:${roomId}`).emit('meeting:participant-joined', target);
+      if (targetSocket) {
+        targetSocket.data.approved = true;
+        targetSocket.emit('meeting:approved');
+        targetSocket.emit('meeting:participants', { participants: [...room.values()].filter((item) => item.socketId !== actualSocketId && item.approved) });
+        targetSocket.broadcast.to(`meeting:${roomId}`).emit('meeting:participant-joined', target);
+      }
+      io.to(`meeting:${roomId}`).emit('meeting:notification', { message: `${target.name} joined the meeting` });
     });
 
-    socket.on('meeting:guest-reject', ({ targetSocketId }) => {
-      const roomId = socket.data.roomId; const room = roomId && activeRooms.get(roomId); const target = room?.get(targetSocketId);
+    socket.on('meeting:guest-reject', ({ targetSocketId, targetUserId, requestKey }) => {
+      const roomId = socket.data.roomId;
+      const room = roomId && activeRooms.get(roomId);
+      let target = targetSocketId ? room?.get(targetSocketId) : null;
+      let actualSocketId = targetSocketId;
+      if (!target && room) {
+        for (const [sId, p] of room) {
+          if ((targetUserId && p.userId === String(targetUserId)) || (requestKey && p.requestKey === requestKey)) {
+            target = p;
+            actualSocketId = sId;
+            break;
+          }
+        }
+      }
       if (!room || !target || !socket.user || room.get(socket.id)?.isHost !== true || target.approved) return;
-      room.delete(targetSocketId); pendingRequests.get(roomId)?.delete(target.requestKey); io.sockets.sockets.get(targetSocketId)?.emit('meeting:rejected', { message: 'The host declined your request to join.' }); io.sockets.sockets.get(targetSocketId)?.disconnect(true);
+      room.delete(actualSocketId);
+      pendingRequests.get(roomId)?.delete(target.requestKey);
+      io.sockets.sockets.get(actualSocketId)?.emit('meeting:rejected', { message: 'The host declined your request to join.' });
+      io.sockets.sockets.get(actualSocketId)?.disconnect(true);
       Meeting.updateOne({ roomId }, { $pull: { pendingJoinRequests: { user: target.userId } } }).catch(() => {});
     });
 
@@ -140,14 +174,22 @@ export function installMeetingSockets(io) {
     });
 
     socket.on('meeting:kick', async ({ targetSocketId }) => {
-      const roomId = socket.data.roomId; const room = activeRooms.get(roomId); const meeting = roomId ? await Meeting.findOne({ roomId }) : null; const target = room?.get(targetSocketId) || [...(room?.values() || [])].find((item) => item.userId === String(targetSocketId)); const targetId = target?.socketId;
+      const roomId = socket.data.roomId;
+      const room = activeRooms.get(roomId);
+      const meeting = roomId ? await Meeting.findOne({ roomId }) : null;
+      const target = room?.get(targetSocketId) || [...(room?.values() || [])].find((item) => item.userId === String(targetSocketId) || item.sessionId === String(targetSocketId));
+      const targetId = target?.socketId;
       if (!targetId || !meeting || !socket.user || meeting.host.toString() !== socket.user._id.toString()) return;
       io.to(targetId).emit('meeting:removed', { message: 'You were removed by the host' });
       io.sockets.sockets.get(targetId)?.disconnect(true);
     });
 
     socket.on('meeting:mute', async ({ targetSocketId }) => {
-      const roomId = socket.data.roomId; const room = roomId && activeRooms.get(roomId); const meeting = roomId ? await Meeting.findOne({ roomId }) : null; const target = room?.get(targetSocketId) || [...(room?.values() || [])].find((item) => item.userId === String(targetSocketId)); const targetId = target?.socketId;
+      const roomId = socket.data.roomId;
+      const room = roomId && activeRooms.get(roomId);
+      const meeting = roomId ? await Meeting.findOne({ roomId }) : null;
+      const target = room?.get(targetSocketId) || [...(room?.values() || [])].find((item) => item.userId === String(targetSocketId) || item.sessionId === String(targetSocketId));
+      const targetId = target?.socketId;
       if (!targetId || !meeting || !socket.user || meeting.host.toString() !== socket.user._id.toString()) return;
       io.to(targetId).emit('meeting:force-muted', { message: 'The host muted your microphone' });
       io.to(`meeting:${roomId}`).emit('meeting:notification', { message: `${socket.user.name} muted a participant` });

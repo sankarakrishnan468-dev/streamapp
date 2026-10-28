@@ -22,12 +22,20 @@ import { notFound, errorHandler } from './middleware/errorHandler.js';
 
 validateEnvironment();
 
-export function getCorsOrigin(origin, callback) {
-  if (!origin) return callback(null, true);
-  if (env.frontendUrls.includes(origin)) return callback(null, true);
+export function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  const cleanOrigin = origin.trim().replace(/\/+$/, '');
+  const allowed = [
+    'https://lively-caramel-4dddfe.netlify.app',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    ...env.frontendUrls.map((url) => url.replace(/\/+$/, '')),
+  ];
+  if (allowed.includes(cleanOrigin)) return true;
+
   if (env.nodeEnv !== 'production') {
     try {
-      const parsed = new URL(origin);
+      const parsed = new URL(cleanOrigin);
       if (
         parsed.hostname === 'localhost' ||
         parsed.hostname === '127.0.0.1' ||
@@ -35,12 +43,20 @@ export function getCorsOrigin(origin, callback) {
         parsed.hostname.startsWith('10.') ||
         parsed.hostname.startsWith('172.')
       ) {
-        return callback(null, true);
+        return true;
       }
     } catch {
       // ignore
     }
   }
+  return false;
+}
+
+export function getCorsOrigin(origin, callback) {
+  if (isAllowedOrigin(origin)) {
+    return callback(null, true);
+  }
+  console.warn('[CORS BLOCKED]', origin);
   return callback(null, false);
 }
 
@@ -48,26 +64,18 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet());
-  const allowedOrigins = [
-    ...new Set([
-      'https://lively-caramel-4dddfe.netlify.app',
-      'http://localhost:5173',
-      ...env.frontendUrls,
-    ]),
-  ];
 
   app.use(cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (isAllowedOrigin(origin)) {
         return callback(null, true);
       }
-
-      console.warn('[CORS BLOCKED]', origin);
-      return callback(null, false);
+      console.warn('[HTTP CORS BLOCKED]', origin);
+      return callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
@@ -92,7 +100,25 @@ export function createApp() {
 export function createServer() {
   const app = createApp();
   const httpServer = http.createServer(app);
-  const io = new SocketServer(httpServer, { cors: { origin: getCorsOrigin, credentials: true } });
+  const io = new SocketServer(httpServer, {
+    cors: {
+      origin: getCorsOrigin,
+      credentials: true,
+      methods: ['GET', 'POST'],
+      allowedHeaders: ['Content-Type', 'Authorization'],
+    },
+    pingTimeout: 30000,
+    pingInterval: 15000,
+    transports: ['websocket', 'polling'],
+  });
+
+  io.on('connection', (socket) => {
+    console.log(`[Socket.IO] Client connected: ${socket.id} (user: ${socket.user?.username || 'unauthenticated'})`);
+    socket.on('disconnect', (reason) => {
+      console.log(`[Socket.IO] Client disconnected: ${socket.id} (reason: ${reason})`);
+    });
+  });
+
   installSocketAuth(io);
   installMeetingSockets(io);
   installStreamSockets(io);
