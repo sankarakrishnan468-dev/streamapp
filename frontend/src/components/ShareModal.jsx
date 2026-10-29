@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, X } from 'lucide-react';
+import { Check, Copy, MessageCircle, Send, Share2, Twitter, X } from 'lucide-react';
 
 /* ── Brand SVG icons ─────────────────────────────────────────────────── */
 function WhatsAppIcon() {
@@ -26,84 +26,208 @@ function InstagramIcon() {
   );
 }
 
-/* ── ShareModal ───────────────────────────────────────────────────────── */
+/* ── Modern Premium Share Modal ───────────────────────────────────────── */
 export default function ShareModal({ url, title, onClose }) {
   const [copied, setCopied] = useState(false);
 
-  const encodedUrl  = encodeURIComponent(url);
-  const encodedText = encodeURIComponent(`${title} — Join me here: ${url}`);
+  const encodedUrl = encodeURIComponent(url);
+  const encodedText = encodeURIComponent(`${title} — Join my private meeting: ${url}`);
 
   const platforms = [
     {
       id: 'whatsapp',
       label: 'WhatsApp',
       color: '#25D366',
+      bg: 'rgba(37, 211, 102, 0.12)',
+      border: 'rgba(37, 211, 102, 0.3)',
       icon: <WhatsAppIcon />,
       href: `https://wa.me/?text=${encodedText}`,
     },
     {
       id: 'twitter',
       label: 'X (Twitter)',
-      color: '#000',
+      color: '#ffffff',
+      bg: 'rgba(255, 255, 255, 0.08)',
+      border: 'rgba(255, 255, 255, 0.15)',
       icon: <TwitterIcon />,
       href: `https://twitter.com/intent/tweet?url=${encodedUrl}&text=${encodeURIComponent(title)}`,
     },
     {
       id: 'instagram',
-      label: 'Instagram (copy link)',
+      label: 'Instagram',
       color: '#E1306C',
+      bg: 'rgba(225, 48, 108, 0.12)',
+      border: 'rgba(225, 48, 108, 0.3)',
       icon: <InstagramIcon />,
       action: 'copy',
     },
   ];
 
   async function copyLink() {
-    try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // fallback
+    }
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 2200);
   }
 
   function handlePlatform(platform) {
-    if (platform.action === 'copy') { copyLink(); }
-    else { window.open(platform.href, '_blank', 'noopener,noreferrer'); }
+    if (platform.action === 'copy') {
+      copyLink();
+    } else {
+      window.open(platform.href, '_blank', 'noopener,noreferrer');
+    }
   }
 
   return (
-    <div className="share-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label="Share">
-      <div className="share-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="share-modal-header">
-          <strong>Share this link</strong>
-          <button className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
-        </div>
-
-        <div className="share-url-box">
-          <span className="share-url-text">{url}</span>
-          <button className="button ghost share-copy-btn" onClick={copyLink}>
-            <Copy size={14} />{copied ? 'Copied!' : 'Copy'}
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        backdropFilter: 'blur(8px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1rem',
+        zIndex: 9999,
+        animation: 'fadeIn 0.2s ease-out',
+      }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '460px',
+          backgroundColor: '#141722',
+          borderRadius: '1.25rem',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 30px rgba(99, 102, 241, 0.2)',
+          padding: '1.75rem',
+          color: '#f8fafc',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <div style={{ width: '2.25rem', height: '2.25rem', borderRadius: '0.625rem', backgroundColor: 'rgba(99, 102, 241, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#818cf8' }}>
+              <Share2 size={18} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, color: '#f8fafc' }}>Invite Participants</h3>
+              <p style={{ fontSize: '0.78rem', color: '#94a3b8', margin: 0 }}>Anyone with this private link can ask to join</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0.35rem', borderRadius: '0.5rem', display: 'flex', alignItems: 'center' }}
+          >
+            <X size={18} />
           </button>
         </div>
 
-        <p className="share-section-label">Share to</p>
+        {/* Meeting Link Box */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: '#090a0f',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '0.75rem',
+            padding: '0.4rem 0.5rem 0.4rem 0.85rem',
+            gap: '0.5rem',
+            marginBottom: '1.5rem',
+          }}
+        >
+          <span
+            style={{
+              flex: 1,
+              fontSize: '0.82rem',
+              color: '#cbd5e1',
+              fontFamily: 'monospace',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {url}
+          </span>
+          <button
+            onClick={copyLink}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              padding: '0.55rem 0.95rem',
+              backgroundColor: copied ? '#10b981' : '#4f46e5',
+              color: '#ffffff',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              borderRadius: '0.5rem',
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'background-color 0.2s',
+            }}
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+            <span>{copied ? 'Copied!' : 'Copy'}</span>
+          </button>
+        </div>
 
-        <div className="share-platforms">
+        {/* Direct Social Share Buttons */}
+        <div style={{ marginBottom: '0.75rem' }}>
+          <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b' }}>
+            Share directly to
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1.25rem' }}>
           {platforms.map((p) => (
             <button
               key={p.id}
-              className="share-platform-btn"
-              style={{ '--pcolor': p.color }}
               onClick={() => handlePlatform(p)}
-              title={p.label}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
+                padding: '0.85rem 0.5rem',
+                backgroundColor: p.bg,
+                border: `1px solid ${p.border}`,
+                borderRadius: '0.75rem',
+                color: p.color,
+                cursor: 'pointer',
+                transition: 'transform 0.15s, background-color 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
             >
-              <span className="share-platform-icon">{p.icon}</span>
-              <span>{p.label}</span>
-              {p.action === 'copy' && copied && <span className="share-copied-tag">✓ Copied!</span>}
+              {p.icon}
+              <span style={{ fontSize: '0.76rem', fontWeight: 600, color: '#f8fafc' }}>{p.label}</span>
             </button>
           ))}
         </div>
 
-        <p className="share-hint">
-          📸 <strong>Instagram:</strong> Tap "Instagram (copy link)" — then paste it into your story, bio, or DM.
-        </p>
+        {/* Tip Banner */}
+        <div
+          style={{
+            backgroundColor: 'rgba(99, 102, 241, 0.08)',
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+            borderRadius: '0.625rem',
+            padding: '0.75rem 1rem',
+            fontSize: '0.78rem',
+            color: '#a5b4fc',
+            lineHeight: 1.45,
+          }}
+        >
+          💡 <strong>Tip:</strong> Guests can join from any modern web browser without installing additional plugins.
+        </div>
       </div>
     </div>
   );

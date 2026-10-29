@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Send,
   Square,
+  Upload,
   Users,
   Video,
   VideoOff,
@@ -25,7 +26,7 @@ export default function StreamStudio() {
   const navigate = useNavigate();
   const preview = useRef(null);
   const media = useRef(null);
-  const fileVideoRef = useRef(null);
+  const videoFilePlayer = useRef(null);
   const fileInputRef = useRef(null);
   const socket = useRef(null);
   const peers = useRef(new Map());
@@ -39,10 +40,13 @@ export default function StreamStudio() {
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
   const [error, setError] = useState('');
-  const [videoSource, setVideoSource] = useState('camera'); // 'camera' | 'file' | 'screen'
-  const [activeFileName, setActiveFileName] = useState('');
-  const [filePlaying, setFilePlaying] = useState(false);
+  const [videoSource, setVideoSource] = useState('camera'); // 'camera' | 'screen' | 'video'
+  const [myVideos, setMyVideos] = useState([]);
+  const [selectedVideoUrl, setSelectedVideoUrl] = useState('');
+  const [selectedVideoTitle, setSelectedVideoTitle] = useState('');
+  const [isPlayingVideoFile, setIsPlayingVideoFile] = useState(false);
 
+  // Switch active tracks on all connected viewer WebRTC peer connections
   function switchStreamTracks(newStream) {
     if (!newStream) return;
     const newVideoTrack = newStream.getVideoTracks()[0];
@@ -93,24 +97,63 @@ export default function StreamStudio() {
     }
   }
 
+  // Load stream data, local videos, and setup WebRTC socket
   useEffect(() => {
     let active = true;
 
     async function setup() {
       try {
-        const { data } = await api.get(`/streams/${id}`);
-        if (!active) return;
-        setStream(data.stream);
+        const [{ data: streamData }, { data: videoData }] = await Promise.all([
+          api.get(`/streams/${id}`),
+          api.get('/videos/mine').catch(() => ({ data: { videos: [] } })),
+        ]);
 
-        // Acquire initial camera/mic
+        if (!active) return;
+        setStream(streamData.stream);
+        setMyVideos(videoData.videos || []);
+
+        // Hardware detection and camera setup
         try {
-          const streamMedia = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-          media.current = streamMedia;
-          if (preview.current) {
-            preview.current.srcObject = streamMedia;
+          if (!navigator.mediaDevices?.getUserMedia) {
+            setError('Media devices are not supported in this browser.');
+          } else {
+            const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+            const hasVideo = devices.some((d) => d.kind === 'videoinput');
+            const hasAudio = devices.some((d) => d.kind === 'audioinput');
+
+            if (!hasVideo && !hasAudio) {
+              setError('No physical camera or mic found. You can present your Screen or play Uploaded Videos below.');
+            } else {
+              let streamMedia = null;
+              try {
+                streamMedia = await navigator.mediaDevices.getUserMedia({
+                  video: hasVideo,
+                  audio: hasAudio,
+                });
+              } catch {
+                if (hasVideo) {
+                  try {
+                    streamMedia = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                  } catch {}
+                }
+                if (!streamMedia && hasAudio) {
+                  try {
+                    streamMedia = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                  } catch {}
+                }
+              }
+
+              if (streamMedia) {
+                media.current = streamMedia;
+                if (preview.current) {
+                  preview.current.srcObject = streamMedia;
+                }
+                setError('');
+              }
+            }
           }
-        } catch {
-          setError('Camera/microphone preview is not available on this device.');
+        } catch (mediaErr) {
+          setError('Camera/mic could not be started. You can use Screen Share or Video Playback.');
         }
 
         const client = io(socketUrl, getSocketOptions());
@@ -169,27 +212,108 @@ export default function StreamStudio() {
     };
   }, [id]);
 
-  async function setScreenShare() {
+  // 1. Share Screen (System screen, window, or tab)
+  async function handleScreenShare() {
+    setError('');
     try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        setError('Screen sharing is not supported by your browser or environment.');
+        return;
+      }
+
+      let screenStream = null;
+      try {
+        // Attempt sharing with audio
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { cursor: 'always' },
+          audio: true,
+        });
+      } catch (audioErr) {
+        // If audio sharing is unsupported or refused by OS, fallback to video-only display media
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { cursor: 'always' },
+          audio: false,
+        });
+      }
+
       if (preview.current) preview.current.srcObject = screenStream;
       media.current = screenStream;
       setVideoSource('screen');
       switchStreamTracks(screenStream);
-      screenStream.getVideoTracks()[0].onended = () => resetToCamera();
-    } catch {
-      setError('Screen sharing was cancelled or unavailable.');
+
+      // Handle user clicking native "Stop sharing" button
+      screenStream.getVideoTracks()[0].onended = () => {
+        handleBackToCamera();
+      };
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'AbortError') {
+        // User clicked "Cancel" on the browser screen-picker popup
+        // Keep current stream intact and don't treat cancellation as a hard error
+        setError('');
+      } else {
+        setError(err.message || 'Screen sharing is unavailable.');
+      }
     }
   }
 
-  async function resetToCamera() {
+  // 2. Play Uploaded or Local Video File Directly on Stream
+  function handlePlayVideoOnStream(videoUrl, title) {
+    if (!videoUrl || !videoFilePlayer.current) return;
+    setError('');
+    setSelectedVideoUrl(videoUrl);
+    setSelectedVideoTitle(title || 'Video Player');
+
+    const vElem = videoFilePlayer.current;
+    vElem.src = videoUrl;
+    vElem.play().then(() => {
+      // Capture live stream from the HTML5 video element
+      let capturedStream = null;
+      if (typeof vElem.captureStream === 'function') {
+        capturedStream = vElem.captureStream();
+      } else if (typeof vElem.mozCaptureStream === 'function') {
+        capturedStream = vElem.mozCaptureStream();
+      }
+
+      if (capturedStream) {
+        if (preview.current) preview.current.srcObject = capturedStream;
+        media.current = capturedStream;
+        setVideoSource('video');
+        setIsPlayingVideoFile(true);
+        switchStreamTracks(capturedStream);
+
+        capturedStream.getVideoTracks()[0].onended = () => {
+          setIsPlayingVideoFile(false);
+        };
+      }
+    }).catch((err) => {
+      setError('Unable to play video source on live stream.');
+    });
+  }
+
+  // 3. Play Local MP4/WebM file from user's hard drive
+  function handleFileSelect(event) {
+    const file = event.target.files?.[0];
+    if (file) {
+      const fileUrl = URL.createObjectURL(file);
+      handlePlayVideoOnStream(fileUrl, file.name);
+    }
+  }
+
+  // 4. Return Back to Camera
+  async function handleBackToCamera() {
     try {
+      if (videoFilePlayer.current) {
+        videoFilePlayer.current.pause();
+      }
+      setIsPlayingVideoFile(false);
       const camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       if (preview.current) preview.current.srcObject = camStream;
       media.current = camStream;
       setVideoSource('camera');
       switchStreamTracks(camStream);
-    } catch {}
+    } catch {
+      setVideoSource('camera');
+    }
   }
 
   function toggleMute() {
@@ -226,6 +350,21 @@ export default function StreamStudio() {
 
   return (
     <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
+      {/* Hidden helper video element for capturing canvas/video tracks */}
+      <video
+        ref={videoFilePlayer}
+        playsInline
+        style={{ display: 'none' }}
+        onEnded={() => setIsPlayingVideoFile(false)}
+      />
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="video/mp4,video/webm,video/ogg"
+        style={{ display: 'none' }}
+        onChange={handleFileSelect}
+      />
+
       {/* Studio Top Control Banner */}
       <div
         style={{
@@ -278,18 +417,18 @@ export default function StreamStudio() {
 
       {/* Main Studio Work Area */}
       <div className="stream-view-layout">
-        {/* Left Column: Broadcaster Preview & Hardware Switching */}
+        {/* Left Column: Broadcaster Preview & Media Sources */}
         <div>
           <div className="stream-player-container">
             <video ref={preview} autoPlay muted playsInline />
 
-            {/* Media Mode Pill */}
+            {/* Media Source Indicator */}
             <div
               style={{
                 position: 'absolute',
                 top: '1rem',
                 left: '1rem',
-                backgroundColor: 'rgba(0,0,0,0.7)',
+                backgroundColor: 'rgba(0,0,0,0.75)',
                 backdropFilter: 'blur(8px)',
                 borderRadius: 'var(--radius-md)',
                 padding: '0.35rem 0.75rem',
@@ -298,15 +437,19 @@ export default function StreamStudio() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.4rem',
+                border: '1px solid rgba(255,255,255,0.1)',
               }}
             >
               {videoSource === 'camera' && <Video size={13} color="#34d399" />}
               {videoSource === 'screen' && <Monitor size={13} color="#60a5fa" />}
-              <span style={{ textTransform: 'capitalize' }}>Source: {videoSource}</span>
+              {videoSource === 'video' && <Play size={13} color="#f43f5e" />}
+              <span style={{ textTransform: 'capitalize', fontWeight: 600 }}>
+                Broadcasting: {videoSource === 'video' ? `Video (${selectedVideoTitle})` : videoSource}
+              </span>
             </div>
           </div>
 
-          {/* Broadcaster Device Bar */}
+          {/* Broadcaster Source Controls */}
           <div
             style={{
               display: 'flex',
@@ -321,6 +464,7 @@ export default function StreamStudio() {
               marginTop: '1rem',
             }}
           >
+            {/* Mic & Camera Toggles */}
             <div style={{ display: 'flex', gap: '0.6rem' }}>
               <button
                 onClick={toggleMute}
@@ -328,7 +472,7 @@ export default function StreamStudio() {
                 style={{ fontSize: '0.8rem' }}
               >
                 {muted ? <MicOff size={15} /> : <Mic size={15} />}
-                <span>{muted ? 'Unmute Mic' : 'Mute Mic'}</span>
+                <span>{muted ? 'Unmute' : 'Mute'}</span>
               </button>
 
               <button
@@ -337,21 +481,99 @@ export default function StreamStudio() {
                 style={{ fontSize: '0.8rem' }}
               >
                 {cameraOff ? <VideoOff size={15} /> : <Video size={15} />}
-                <span>{cameraOff ? 'Turn Camera On' : 'Turn Camera Off'}</span>
+                <span>{cameraOff ? 'Cam Off' : 'Cam On'}</span>
               </button>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.6rem' }}>
-              {videoSource !== 'camera' ? (
-                <button onClick={resetToCamera} className="button secondary" style={{ fontSize: '0.8rem' }}>
+            {/* Source Switchers: Camera / Screen / Video */}
+            <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+              {videoSource !== 'camera' && (
+                <button onClick={handleBackToCamera} className="button ghost" style={{ fontSize: '0.8rem' }}>
                   <Video size={15} /> Back to Camera
                 </button>
-              ) : (
-                <button onClick={setScreenShare} className="button primary" style={{ fontSize: '0.8rem' }}>
-                  <Monitor size={15} /> Present Screen
-                </button>
               )}
+
+              <button
+                onClick={handleScreenShare}
+                className={`button ${videoSource === 'screen' ? 'primary' : 'secondary'}`}
+                style={{ fontSize: '0.8rem' }}
+              >
+                <Monitor size={15} /> Share Screen
+              </button>
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="button secondary"
+                style={{ fontSize: '0.8rem' }}
+                title="Play an MP4 file from your computer"
+              >
+                <Upload size={15} /> Play Local Video
+              </button>
             </div>
+          </div>
+
+          {/* Video Library Strip: Play your uploaded videos on stream */}
+          <div
+            style={{
+              backgroundColor: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '1.25rem',
+              marginTop: '1rem',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+              <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <FileVideo size={16} color="#818cf8" /> Play Your Uploaded Videos on Stream
+              </h3>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                {myVideos.length} uploaded videos available
+              </span>
+            </div>
+
+            {myVideos.length > 0 ? (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                  gap: '0.75rem',
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                }}
+              >
+                {myVideos.map((vid) => (
+                  <div
+                    key={vid._id}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      backgroundColor: 'var(--bg-surface-elevated)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '0.65rem',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {vid.title}
+                    </div>
+                    <small style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', margin: '0.2rem 0 0.5rem' }}>
+                      {vid.category || 'Video'} · {vid.views || 0} views
+                    </small>
+                    <button
+                      onClick={() => handlePlayVideoOnStream(vid.playbackUrl, vid.title)}
+                      className="button primary"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.6rem', marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                    >
+                      <Play size={12} fill="#fff" /> Broadcast Video
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', padding: '0.5rem 0' }}>
+                You haven't uploaded any videos yet. You can use <strong>Play Local Video</strong> above to select an MP4 file from your device, or upload one in Creator Studio.
+              </div>
+            )}
           </div>
         </div>
 

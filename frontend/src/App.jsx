@@ -35,18 +35,20 @@ import { io } from "socket.io-client";
 import MeetingCreate from "./pages/meetings/MeetingCreate.jsx";
 import MeetingRoom from "./pages/meetings/MeetingRoom.jsx";
 import MeetingViewer from "./pages/meetings/MeetingViewer.jsx";
-import { api, clearStoredToken, getApiError, getSocketOptions, setStoredToken, socketUrl } from "./services/api.js";
+import { Navbar, Sidebar } from "./components/Navbar.jsx";
+import { api, clearStoredToken, getApiError, getSocketOptions, getStoredToken, setStoredToken, socketUrl } from "./services/api.js";
 import StreamCreate from "./pages/streaming/StreamCreate.jsx";
 import StreamViewer from "./pages/streaming/StreamViewer.jsx";
 import StreamStudio from "./pages/streaming/StreamStudio.jsx";
 import ProfileSettings from "./pages/ProfileSettings.jsx";
+import YouTubeExplore from "./pages/videos/YouTubeExplore.jsx";
+import YouTubeDetailsPage from "./pages/videos/YouTubeDetailsPage.jsx";
 import {
   CreatorChannel,
   SavedVideos,
   VideoExplore,
   VideoPlayer,
   VideoUpload,
-  YouTubePlayer,
   WatchHistory,
 } from "./pages/videos/VideoPages.jsx";
 import {
@@ -86,13 +88,23 @@ export function Shell({ children }) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   useEffect(() => {
+    // Only verify session if a stored token exists or cookies are active
+    const token = getStoredToken();
+    if (!token && !document.cookie.includes('streamconnect_session')) {
+      setUser(null);
+      return;
+    }
+
     api
       .get("/auth/me")
       .then(({ data }) => {
         setUser(data.user);
         if (data.token) setStoredToken(data.token);
       })
-      .catch(() => setUser(null));
+      .catch(() => {
+        clearStoredToken();
+        setUser(null);
+      });
   }, [location.pathname]);
 
   const userId = user?._id ?? null;
@@ -134,34 +146,7 @@ export function Shell({ children }) {
   };
 
   return (
-    <div
-      className={`app-layout${collapsed ? " sidebar-collapsed" : ""}${drawer ? " drawer-open" : ""}`}
-    >
-      {/* Mobile Top App Bar */}
-      <div className="mobile-bar">
-        <button
-          className="icon-button"
-          onClick={() => setDrawer(true)}
-          aria-label="Open navigation"
-        >
-          <Menu size={22} />
-        </button>
-        <Link className="brand" to="/">
-          <span className="brand-mark">
-            <Radio size={17} />
-          </span>
-          <span>StreamConnect</span>
-        </Link>
-      </div>
-
-      {drawer && (
-        <button
-          className="drawer-backdrop"
-          onClick={() => setDrawer(false)}
-          aria-label="Close navigation"
-        />
-      )}
-
+    <div className="app-layout">
       {/* Real-time Meeting Invitation Banner */}
       {invitation && (
         <div
@@ -206,123 +191,12 @@ export function Shell({ children }) {
         </div>
       )}
 
-      {/* Main Sidebar */}
-      <aside className="sidebar">
-        <div className="sidebar-head">
-          <Link className="brand" to="/" onClick={() => setDrawer(false)}>
-            <span className="brand-mark">
-              <Radio size={17} />
-            </span>
-            <span>StreamConnect</span>
-          </Link>
-          <button
-            className="icon-button sidebar-toggle"
-            onClick={() => setCollapsed((v) => !v)}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-          </button>
-          <button
-            className="icon-button drawer-close"
-            onClick={() => setDrawer(false)}
-            aria-label="Close navigation"
-          >
-            <X size={20} />
-          </button>
-        </div>
+      {/* Sidebar Navigation */}
+      <Sidebar user={user} onLogout={logout} />
 
-        <Link
-          className="new-meeting"
-          to="/meetings"
-          onClick={() => setDrawer(false)}
-        >
-          <Plus size={18} />
-          <span>New Meeting</span>
-        </Link>
-
-        <nav className="side-nav">
-          <div className="side-label">Workspace</div>
-          {mainNavigation.map(navLink)}
-          <div className="side-label">Creator Studio</div>
-          {creatorNavigation.map(navLink)}
-        </nav>
-
-        <div className="sidebar-footer">
-          <div className="profile-mini">
-            <span className="avatar-small">
-              {user?.name?.slice(0, 1).toUpperCase() || "G"}
-            </span>
-            <span className="profile-copy">
-              <strong>{user?.name || "Guest User"}</strong>
-              <small>{user?.username ? `@${user.username}` : "Sign in to broadcast"}</small>
-            </span>
-          </div>
-
-          <div className="footer-actions">
-            <Link className="mini-link" to="/profile">
-              <Settings size={16} />
-              <span>Settings</span>
-            </Link>
-            <div className="theme-row">
-              <span>
-                <Sparkles size={16} /> Appearance
-              </span>
-              <ThemeToggle />
-            </div>
-            {user ? (
-              <button className="mini-link logout-button" onClick={logout}>
-                <LogOut size={16} />
-                <span>Sign Out</span>
-              </button>
-            ) : (
-              <Link className="mini-link" to="/login">
-                <LogOut size={16} />
-                <span>Sign In</span>
-              </Link>
-            )}
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Content Area & Sticky Top Bar */}
+      {/* Main Content Area with Header */}
       <div className="app-content">
-        <header className="content-header">
-          {/* Global Search Bar */}
-          <form className="header-search" onSubmit={handleTopSearch}>
-            <Search size={16} style={{ color: "var(--text-muted)", shrink: 0 }} />
-            <input
-              value={topSearch}
-              onChange={(e) => setTopSearch(e.target.value)}
-              placeholder="Search streams, videos, topics..."
-            />
-          </form>
-
-          {/* Quick Header CTAs */}
-          <div className="header-actions">
-            <Link className="button ghost" to="/meetings" title="Create or join meeting">
-              <Users size={16} />
-              <span className="hidden sm:inline">Meetings</span>
-            </Link>
-            <Link className="button primary" to="/live/create" title="Go Live">
-              <Radio size={16} />
-              <span className="hidden sm:inline">Go Live</span>
-            </Link>
-            <Link className="icon-button" to="/notifications" aria-label="Notifications">
-              <Bell size={18} />
-            </Link>
-
-            {user ? (
-              <Link to="/profile" className="avatar-small" style={{ width: "2rem", height: "2rem", fontSize: "0.8rem" }}>
-                {user.name.charAt(0).toUpperCase()}
-              </Link>
-            ) : (
-              <Link to="/login" className="button secondary" style={{ fontSize: "0.8rem", padding: "0.45rem 0.85rem" }}>
-                Sign In
-              </Link>
-            )}
-          </div>
-        </header>
-
+        <Navbar user={user} onLogout={logout} />
         <main>{children}</main>
       </div>
     </div>
@@ -417,7 +291,7 @@ function Home() {
               <span className="live-badge">LIVE NOW</span>
               <h2>Featured Live Streams</h2>
             </div>
-            <Link to="/live">Browse All Streams →</Link>
+            <Link to="/live">Browse All Streams ΓåÆ</Link>
           </div>
 
           {streams.length > 0 ? (
@@ -437,7 +311,7 @@ function Home() {
                     </div>
                     <h3>{stream.title}</h3>
                   </Link>
-                  <p>{stream.owner?.name || "Creator"} · {stream.category || "General"}</p>
+                  <p>{stream.owner?.name || "Creator"} ┬╖ {stream.category || "General"}</p>
                 </article>
               ))}
             </div>
@@ -457,7 +331,7 @@ function Home() {
         <section>
           <div className="section-heading">
             <h2>Recommended Videos</h2>
-            <Link to="/explore">View More Videos →</Link>
+            <Link to="/explore">View More Videos ΓåÆ</Link>
           </div>
 
           {videos.length > 0 ? (
@@ -474,7 +348,7 @@ function Home() {
                     </div>
                     <h3>{video.title}</h3>
                   </Link>
-                  <p>{video.owner?.name || "Creator"} · {video.views || 0} views</p>
+                  <p>{video.owner?.name || "Creator"} ┬╖ {video.views || 0} views</p>
                   <small>{video.category || "General"}</small>
                 </article>
               ))}
@@ -552,7 +426,7 @@ function AuthForm({ mode = "login" }) {
           </label>
           <label>
             Password
-            <input type="password" name="password" value={form.password} onChange={update} required minLength={8} placeholder="••••••••" />
+            <input type="password" name="password" value={form.password} onChange={update} required minLength={8} placeholder="ΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇó" />
           </label>
 
           {status.error && <div className="form-error">{status.error}</div>}
@@ -592,12 +466,13 @@ export default function App() {
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<AuthForm mode="login" />} />
       <Route path="/register" element={<AuthForm mode="register" />} />
-      <Route path="/profile" element={<Shell><ProfileSettings /></Shell>} />
+      <Route path="/profile" element={<ProfileSettings />} />
       <Route path="/explore" element={<VideoExplore />} />
+      <Route path="/youtube" element={<YouTubeExplore />} />
       <Route path="/videos/upload" element={<VideoUpload />} />
       <Route path="/videos/manage" element={<VideoManagement />} />
       <Route path="/videos/:id" element={<VideoPlayer />} />
-      <Route path="/youtube/:id" element={<YouTubePlayer />} />
+      <Route path="/youtube/:id" element={<YouTubeDetailsPage />} />
       <Route path="/videos/saved" element={<SavedVideos />} />
       <Route path="/videos/history" element={<WatchHistory />} />
       <Route path="/notifications" element={<Notifications />} />

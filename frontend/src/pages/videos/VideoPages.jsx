@@ -36,8 +36,7 @@ function VideoCard({ video }) {
 export function VideoExplore() {
   const [params, setParams] = useSearchParams();
   const [videos, setVideos] = useState([]);
-  const [recommendations, setRecommendations] = useState([]);
-  const [youtubeVideos, setYoutubeVideos] = useState([]);
+    const [youtubeVideos, setYoutubeVideos] = useState([]);
   const [search, setSearch] = useState(params.get('search') || '');
   const [error, setError] = useState('');
   const [youtubeError, setYoutubeError] = useState('');
@@ -70,10 +69,6 @@ export function VideoExplore() {
 
   useEffect(() => {
     load();
-    // Load AI recommended videos based on user watch history
-    api.get('/ai/recommendations')
-      .then(({ data }) => setRecommendations(data.recommendations || []))
-      .catch(() => {});
   }, []);
 
   return (
@@ -96,21 +91,6 @@ export function VideoExplore() {
       </section>
 
       {error && <div className="form-error">{error}</div>}
-
-      {/* AI Recommendations Section */}
-      {!search && recommendations.length > 0 && (
-        <section style={{ marginBottom: '2.5rem' }}>
-          <div className="section-heading" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Sparkles size={20} color="#a855f7" />
-            <h2 style={{ margin: 0 }}>Recommended For You (AI)</h2>
-          </div>
-          <div className="video-grid">
-            {recommendations.map((video) => (
-              <VideoCard key={video._id} video={video} />
-            ))}
-          </div>
-        </section>
-      )}
 
       <div className="section-heading">
         <h2>StreamConnect videos</h2>
@@ -191,9 +171,7 @@ export function VideoUpload() {
     tags: '',
     visibility: 'public',
   });
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [aiGenerating, setAiGenerating] = useState(false);
-  const [status, setStatus] = useState('');
+      const [status, setStatus] = useState('');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -223,36 +201,6 @@ export function VideoUpload() {
 
   function update(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
-  }
-
-  // AI Metadata Generation (Title, Description, Tags)
-  async function generateWithAi() {
-    if (!aiPrompt && !form.title) {
-      setError('Please provide a video topic or draft title for AI generation.');
-      return;
-    }
-    setAiGenerating(true);
-    setError('');
-    try {
-      const { data } = await api.post('/ai/generate-metadata', {
-        prompt: aiPrompt || form.title,
-        currentTitle: form.title,
-        category: form.category,
-      });
-      if (data.metadata) {
-        setForm((prev) => ({
-          ...prev,
-          title: data.metadata.title || prev.title,
-          description: data.metadata.description || prev.description,
-          tags: Array.isArray(data.metadata.tags) ? data.metadata.tags.join(', ') : prev.tags,
-          category: data.metadata.category || prev.category,
-        }));
-      }
-    } catch (err) {
-      setError(getApiError(err, 'AI metadata generation failed. Check backend OpenAI API key.'));
-    } finally {
-      setAiGenerating(false);
-    }
   }
 
   async function submit(event) {
@@ -285,33 +233,6 @@ export function VideoUpload() {
         <div className="feature-icon"><Upload /></div>
         <h1>Upload a video</h1>
         <p>Videos are stored locally and delivered from the media server.</p>
-
-        {/* AI Assistant Section */}
-        <div style={{ backgroundColor: 'rgba(168, 85, 247, 0.08)', border: '1px solid rgba(168, 85, 247, 0.25)', borderRadius: '0.75rem', padding: '1rem', marginBottom: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#c084fc', fontWeight: '700', fontSize: '0.85rem' }}>
-            <Sparkles size={16} /> AI Title & Description Assistant
-          </div>
-          <p style={{ fontSize: '0.75rem', color: '#a1a1aa', margin: '0.35rem 0 0.75rem' }}>
-            Type your topic or draft notes, and let GPT-4o generate click-worthy titles, descriptions, and tags.
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <input
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="e.g. Building a live streaming app in React and Node.js..."
-              style={{ flex: 1, padding: '0.5rem', borderRadius: '0.5rem', backgroundColor: '#18181b', border: '1px solid #3f3f46', color: '#fff', fontSize: '0.8rem' }}
-            />
-            <button
-              type="button"
-              onClick={generateWithAi}
-              disabled={aiGenerating}
-              className="button primary"
-              style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', backgroundColor: '#a855f7', borderColor: '#a855f7', fontSize: '0.75rem' }}
-            >
-              <Sparkles size={14} /> {aiGenerating ? 'Generating…' : 'Generate with AI'}
-            </button>
-          </div>
-        </div>
 
         <form className="meeting-form" onSubmit={submit}>
           <label>
@@ -364,10 +285,7 @@ export function VideoPlayer() {
   const [error, setError] = useState('');
 
   // AI Summary, Chapters & Clips state
-  const [aiAnalysis, setAiAnalysis] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'ai'
-
+      
   useEffect(() => {
     Promise.all([api.get(`/videos/${id}`), api.get(`/videos/${id}/comments`)])
       .then(([videoResponse, commentsResponse]) => {
@@ -412,20 +330,6 @@ export function VideoPlayer() {
     }
   }
 
-  // Generate AI Summary and Chapters
-  async function generateSummary() {
-    setAiLoading(true);
-    try {
-      const { data } = await api.post('/ai/summarize', { videoId: id });
-      setAiAnalysis(data.analysis);
-      setActiveTab('ai');
-    } catch (err) {
-      setError(getApiError(err, 'Failed to generate summary. Ensure OPENAI_API_KEY is configured in backend/.env'));
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
   // Seek video player to timestamp (e.g. "02:15")
   function seekTo(timestampStr) {
     if (!video.current || !timestampStr) return;
@@ -453,135 +357,9 @@ export function VideoPlayer() {
         />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1rem' }}>
           <h1 style={{ margin: 0 }}>{item.title}</h1>
-          <button
-            type="button"
-            onClick={generateSummary}
-            disabled={aiLoading}
-            className="button ghost"
-            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#c084fc', borderColor: '#a855f7' }}
-          >
-            <Sparkles size={16} /> {aiLoading ? 'Analyzing…' : 'AI Summary & Chapters'}
-          </button>
         </div>
 
-        {/* Tab switchers */}
-        <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid #27272a', margin: '1rem 0' }}>
-          <button
-            onClick={() => setActiveTab('overview')}
-            style={{
-              padding: '0.5rem 0',
-              border: 'none',
-              borderBottom: activeTab === 'overview' ? '2px solid #3b82f6' : 'none',
-              background: 'none',
-              color: activeTab === 'overview' ? '#ffffff' : '#a1a1aa',
-              fontWeight: '600',
-              cursor: 'pointer',
-            }}
-          >
-            Description
-          </button>
-          {aiAnalysis && (
-            <button
-              onClick={() => setActiveTab('ai')}
-              style={{
-                padding: '0.5rem 0',
-                border: 'none',
-                borderBottom: activeTab === 'ai' ? '2px solid #a855f7' : 'none',
-                background: 'none',
-                color: activeTab === 'ai' ? '#c084fc' : '#a1a1aa',
-                fontWeight: '600',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.3rem',
-              }}
-            >
-              <Sparkles size={14} /> AI Analysis
-            </button>
-          )}
-        </div>
-
-        {activeTab === 'overview' ? (
-          <p style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>{item.description}</p>
-        ) : (
-          aiAnalysis && (
-            <div style={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '0.75rem', padding: '1.25rem', marginBottom: '1.5rem' }}>
-              <h3 style={{ margin: '0 0 0.5rem', color: '#c084fc', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Sparkles size={18} /> Executive Summary
-              </h3>
-              <p style={{ fontSize: '0.9rem', color: '#d4d4d8', lineHeight: '1.6' }}>{aiAnalysis.summary}</p>
-
-              {aiAnalysis.keyTakeaways?.length > 0 && (
-                <div style={{ marginTop: '1rem' }}>
-                  <h4 style={{ margin: '0 0 0.4rem', fontSize: '0.85rem', color: '#a1a1aa', textTransform: 'uppercase' }}>Key Takeaways</h4>
-                  <ul style={{ paddingLeft: '1.2rem', margin: 0, fontSize: '0.85rem', color: '#e4e4e7' }}>
-                    {aiAnalysis.keyTakeaways.map((point, idx) => (
-                      <li key={idx} style={{ marginBottom: '0.25rem' }}>{point}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {aiAnalysis.chapters?.length > 0 && (
-                <div style={{ marginTop: '1.25rem' }}>
-                  <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#a1a1aa', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <List size={14} /> Interactive Chapters (Click to Seek)
-                  </h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.5rem' }}>
-                    {aiAnalysis.chapters.map((ch, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => seekTo(ch.timestamp)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          padding: '0.5rem 0.75rem',
-                          backgroundColor: '#27272a',
-                          border: '1px solid #3f3f46',
-                          borderRadius: '0.5rem',
-                          color: '#ffffff',
-                          cursor: 'pointer',
-                          fontSize: '0.75rem',
-                          textAlign: 'left',
-                        }}
-                      >
-                        <span style={{ color: '#38bdf8', fontWeight: '700' }}>{ch.timestamp}</span>
-                        <span style={{ truncate: true }}>{ch.title}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {aiAnalysis.highlightMoments?.length > 0 && (
-                <div style={{ marginTop: '1.25rem' }}>
-                  <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#a1a1aa', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <Scissors size={14} /> AI Short Clips & Highlights
-                  </h4>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    {aiAnalysis.highlightMoments.map((clip, idx) => (
-                      <div
-                        key={idx}
-                        style={{
-                          padding: '0.5rem 0.75rem',
-                          backgroundColor: 'rgba(168, 85, 247, 0.1)',
-                          border: '1px solid rgba(168, 85, 247, 0.3)',
-                          borderRadius: '0.5rem',
-                          fontSize: '0.75rem',
-                          color: '#e4e4e7',
-                        }}
-                      >
-                        <span style={{ color: '#c084fc', fontWeight: '700' }}>{clip.startTime} - {clip.endTime}: </span>
-                        <span>{clip.reason}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        )}
+        <p style={{ whiteSpace: "pre-wrap", lineHeight: "1.6", marginTop: "1rem", color: "#d4d4d8" }}>{item.description}</p>
 
         <div className="video-actions">
           <button className="control" onClick={like}>

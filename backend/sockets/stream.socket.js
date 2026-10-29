@@ -1,5 +1,4 @@
 import LiveStream from '../models/LiveStream.js';
-import { moderateChatMessage } from '../services/ai.service.js';
 
 const viewers = new Map();
 const blocked = new Map();
@@ -69,8 +68,6 @@ export function installStreamSockets(io) {
     });
 
     socket.on('stream:chat', async ({ message }) => {
-      const mod = await moderateChatMessage(message);
-      if (mod.flagged) return socket.emit('stream:error', { error: 'Message blocked by AI filter: inappropriate or spam content.' });
       if (!socket.data.streamId || typeof message !== 'string' || !message.trim() || message.length > 500) return;
       io.to(room(socket.data.streamId)).emit('stream:chat', {
         id: `${socket.id}-${Date.now()}`,

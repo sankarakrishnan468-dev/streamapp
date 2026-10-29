@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    StreamConnect Modern Design System
    Inspired by Google Meet & YouTube Live
    Dark Navy / Black theme, subtle glassmorphism, refined typography & accents
@@ -90,7 +90,7 @@ a {
   text-decoration: none;
 }
 
-/* ── Typography & Headings ─────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Typography & Headings ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 h1, h2, h3, h4, h5, h6 {
   color: var(--text-primary);
   font-weight: 700;
@@ -98,7 +98,7 @@ h1, h2, h3, h4, h5, h6 {
   margin-top: 0;
 }
 
-/* ── Buttons ───────────────────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Buttons ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .button {
   align-items: center;
   border: 1px solid transparent;
@@ -181,7 +181,7 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-primary);
 }
 
-/* ── Application Workspace Layout (Sidebar + Shell) ────────────────────────── */
+/* ΓöÇΓöÇ Application Workspace Layout (Sidebar + Shell) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .app-layout {
   display: flex;
   min-height: 100vh;
@@ -401,7 +401,7 @@ h1, h2, h3, h4, h5, h6 {
   justify-content: center;
 }
 
-/* ── App Content & Header ──────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ App Content & Header ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .app-content {
   display: flex;
   flex: 1;
@@ -465,7 +465,7 @@ h1, h2, h3, h4, h5, h6 {
   width: 100%;
 }
 
-/* ── Dashboard & Home Page ─────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Dashboard & Home Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .welcome-hero {
   background: radial-gradient(circle at 80% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
               linear-gradient(135deg, var(--bg-surface) 0%, #111422 100%);
@@ -701,7 +701,7 @@ h1, h2, h3, h4, h5, h6 {
   max-width: 420px;
 }
 
-/* ── Forms, Inputs & Cards ─────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Forms, Inputs & Cards ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .auth-card, .upload-card, .meeting-create {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
@@ -775,7 +775,7 @@ h1, h2, h3, h4, h5, h6 {
   padding: 0.75rem 1rem;
 }
 
-/* ── Live Streaming Viewing Page (YouTube Live Style) ───────────────────────── */
+/* ΓöÇΓöÇ Live Streaming Viewing Page (YouTube Live Style) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 .stream-view-layout {
   display: grid;
   gap: 1.5rem;
@@ -846,7 +846,7 @@ h1, h2, h3, h4, h5, h6 {
   padding: 1rem;
 }
 
-/* ── Responsive Rules ───────────────────────────────────────────────────────── */
+/* ΓöÇΓöÇ Responsive Rules ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 @media (max-width: 1024px) {
   .stream-view-layout {
     grid-template-columns: 1fr;
